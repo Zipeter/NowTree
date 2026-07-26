@@ -1,0 +1,718 @@
+:root {
+  --bg: #1e1e1e;
+  --bg-elev: #262626;
+  --bg-input: #2a2a2a;
+  --border: #3a3a3a;
+  --text: #e6e6e6;
+  --text-muted: #8a8a8a;
+  --accent: #4caf82;
+  --danger: #e06c75;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark; /* 默认（暗）时让原生滚动条/控件也走暗色 */
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+
+/* ===== 滚动条：颜色跟随主题（明暗/系统） ===== */
+/* 原生滚动条（Firefox 等）：用主题变量，随 data-theme 翻转 */
+* { scrollbar-width: thin; scrollbar-color: var(--text-muted) var(--bg); }
+/* WebKit / Tauri WebView（Windows 用 Chromium 内核）：显式接管配色 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb {
+  background: var(--border); border-radius: 6px; border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+::-webkit-scrollbar-corner { background: var(--bg); }
+
+.app-shell { display: flex; height: 100vh; overflow: hidden; }
+
+.sidebar {
+  width: 200px; flex-shrink: 0; background: var(--bg-elev);
+  border-right: 1px solid var(--border); padding: 16px 12px;
+  display: flex; flex-direction: column; height: 100vh;
+  overflow-y: auto; overflow-x: hidden;
+}
+.brand { font-weight: 700; font-size: 18px; padding: 8px 8px 16px; letter-spacing: .5px; }
+.nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.nav-item {
+  padding: 9px 10px; border-radius: 8px; color: var(--text-muted);
+  text-decoration: none; font-size: 14px; cursor: pointer;
+  outline: none; /* 0.2.0：鼠标点击导航项后不残留默认白框焦点环 */
+}
+/* 仅键盘 Tab 聚焦时显示焦点环，兼顾可访问性与「点击不留白框」 */
+.nav-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.nav-item.active { background: rgba(76, 175, 130, .15); color: var(--text); font-weight: 600; }
+/* 跨类别拖拽：悬停在左侧分类导航栏上时的落点高亮 */
+.nav-item.cat-drop-over {
+  background: rgba(76, 175, 130, .28);
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--text); font-weight: 700;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+/* 0.1.17：Project 视图里把子事务拖到父行上「改父」时的落点高亮 */
+.tx-item.reparent-over, .tx-child.reparent-over {
+  background: rgba(76, 175, 130, .22);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+  border-radius: 8px;
+}
+.nav-item.disabled { opacity: .55; cursor: default; }
+.sidebar-foot { margin-top: 16px; font-size: 12px; padding: 8px; }
+
+.content {
+  flex: 1; padding: 28px 32px; overflow: hidden; min-width: 0;
+  display: flex; flex-direction: column;
+}
+/* 每个视图撑满内容区：大标题固定在上，列表区自适应占满剩余高度 */
+.view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* 右侧「子界面」容器：占满标题下方剩余空间，滚动条收在内部（0.1.9） */
+.sub-panel {
+  flex: 1; min-height: 0; overflow-y: auto;
+  margin-top: 2px; padding: 12px 16px 18px;
+  background: rgba(0,0,0,.18);
+  border: 1px solid var(--border); border-radius: 12px;
+}
+.muted { color: var(--text-muted); }
+.error { color: var(--danger); }
+
+.view-header { display: flex; align-items: center; gap: 10px; }
+.view-header h2 { margin: 0; font-size: 22px; }
+.count-badge {
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 999px; padding: 1px 9px; font-size: 12px; color: var(--text-muted);
+}
+.view-sub { margin: 4px 0 20px; font-size: 14px; }
+
+.capture {
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px;
+}
+.capture-title, .capture-note, input, textarea, select {
+  width: 100%; padding: 9px 11px; background: var(--bg-input);
+  color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+  font-size: 14px; font-family: inherit; resize: vertical;
+}
+.capture-title:focus, .capture-note:focus, input:focus, textarea:focus, select:focus {
+  outline: none; border-color: var(--accent);
+}
+.capture-actions { display: flex; justify-content: flex-end; }
+
+.btn-primary {
+  background: var(--accent); color: #08130d; border: none; border-radius: 8px;
+  padding: 8px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+.btn-ghost {
+  background: transparent; color: var(--text-muted); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; flex-shrink: 0;
+}
+.btn-ghost:hover { color: var(--danger); border-color: var(--danger); }
+.btn-ghost:disabled { opacity: .45; cursor: not-allowed; }
+
+.tx-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.tx-item {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px;
+}
+/* 左侧主区：占满剩余宽度，内部元素（标题/备注/子列表）纵向堆叠 */
+.tx-main { flex: 1; min-width: 0; }
+/* 标题行：标题单行，溢出省略；固定行高，使左侧控件能精确居中到标题中心 */
+.tx-line { display: flex; align-items: center; gap: 8px; min-width: 0; line-height: 20px; }
+.tx-title { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 0.1.16：备注默认一行收起（最多一行省略），点击展开为完整多行 */
+.tx-note {
+  font-size: 12px; margin-top: 4px; color: var(--text-muted);
+  display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
+  overflow: hidden; cursor: pointer; user-select: none;
+}
+.tx-note.note-expanded {
+  -webkit-line-clamp: unset; display: block; white-space: pre-wrap;
+  overflow: visible; user-select: text;
+}
+
+/* 截止标签 */
+.tx-deadline {
+  display: inline-block; margin-top: 6px; font-size: 12px;
+  color: var(--text-muted); background: var(--bg-input);
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px;
+}
+.tx-deadline.overdue {
+  color: #ff6b6b; background: rgba(224,108,117,.15); border-color: rgba(224,108,117,.6); font-weight: 600;
+}
+
+/* 来源标签（Next 视图中的子事务/Waiting/Someday） */
+.tx-source {
+  display: inline-block; margin-top: 6px; font-size: 12px;
+  color: var(--accent); background: rgba(76,175,130,.12);
+  border: 1px solid rgba(76,175,130,.35); border-radius: 6px; padding: 2px 8px; margin-left: 6px;
+}
+
+/* ===== Project 树状结构（第六步） ===== */
+/* 父事务整体改为纵向：proj-top（标题+工具栏）在上，tx-children（子列表）在下、占满整行宽度 */
+.project-node { display: flex; flex-direction: column; justify-content: flex-start; }
+.proj-top { display: flex; align-items: flex-start; gap: 12px; width: 100%; }
+/* 子事务列表：左侧竖线 + 缩进，体现层级；父事务纵向后子列表自然拉满右侧 */
+.tx-children {
+  list-style: none; margin: 10px 0 0; padding: 0 0 0 16px;
+  display: flex; flex-direction: column; gap: 6px;
+  border-left: 2px solid var(--border); width: 100%;
+}
+.tx-child {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 8px; padding: 9px 12px;
+}
+/* 项目内联「加子步骤」表单 */
+.child-add {
+  margin-top: 10px; display: flex; flex-direction: column; gap: 8px;
+  background: var(--bg-input); border: 1px dashed var(--border);
+  border-radius: 8px; padding: 10px;
+}
+.project-actions { flex-shrink: 0; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* 「加入 Next」按钮激活态（已纳入全局 Next） */
+.btn-ghost.on { color: var(--accent); border-color: var(--accent); }
+.btn-ghost.on:hover { color: var(--accent); border-color: var(--accent); }
+.empty {
+  margin-top: 24px; padding: 24px; text-align: center; color: var(--text-muted);
+  border: 1px dashed var(--border); border-radius: 10px; font-size: 14px;
+}
+
+/* ===== 弹窗 Modal ===== */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px 16px; z-index: 50; overflow-y: auto;
+}
+.modal {
+  width: min(520px, 100%); background: var(--bg-elev);
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0,0,0,.4);
+  margin: auto;
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+}
+.modal-head h3 { margin: 0; font-size: 16px; }
+.modal-close {
+  background: transparent; border: none; color: var(--text-muted);
+  font-size: 20px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.modal-close:hover { color: var(--text); }
+.modal-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; outline: none; }
+.modal-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+
+/* ===== 表单字段 ===== */
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > span { font-size: 14px; color: var(--text-muted); }
+.field select {
+  padding: 8px 10px; background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: inherit;
+}
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.convert-origin {
+  font-size: 12px; background: var(--bg-input); padding: 8px 10px;
+  border-radius: 8px; color: var(--text-muted); white-space: pre-wrap;
+}
+
+/* ===== 分段选择（类别 / 优先级） ===== */
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg-item {
+  padding: 7px 12px; background: var(--bg-input); color: var(--text-muted);
+  border: 1px solid var(--border); border-radius: 8px;
+  font-size: 14px; cursor: pointer; font-family: inherit;
+}
+.seg-item:hover { color: var(--text); }
+.seg-item.on {
+  background: var(--accent); color: #08130d; border-color: var(--accent); font-weight: 600;
+}
+
+/* 优先级数字按钮：无文字，只显示颜色 */
+.seg-item.pri-1 { background: rgba(138,138,138,.22); border-color: rgba(138,138,138,.6); }
+.seg-item.pri-2 { background: rgba(90,160,229,.22); border-color: rgba(90,160,229,.6); }
+.seg-item.pri-3 { background: rgba(201,180,74,.22); border-color: rgba(201,180,74,.6); }
+.seg-item.pri-4 { background: rgba(229,146,90,.22); border-color: rgba(229,146,90,.6); }
+.seg-item.pri-5 { background: rgba(224,108,117,.22); border-color: rgba(224,108,117,.6); }
+/* 选中态用对应优先级颜色高亮边框/底色，不使用主题色 */
+.seg-item.pri-1.on { background: rgba(138,138,138,.45); border-color: #8a8a8a; box-shadow: 0 0 0 1px #8a8a8a; }
+.seg-item.pri-2.on { background: rgba(90,160,229,.45); border-color: #5aa0e5; box-shadow: 0 0 0 1px #5aa0e5; }
+.seg-item.pri-3.on { background: rgba(201,180,74,.45); border-color: #c9b44a; box-shadow: 0 0 0 1px #c9b44a; }
+.seg-item.pri-4.on { background: rgba(229,146,90,.45); border-color: #e5925a; box-shadow: 0 0 0 1px #e5925a; }
+.seg-item.pri-5.on { background: rgba(224,108,117,.45); border-color: #e06c75; box-shadow: 0 0 0 1px #e06c75; }
+
+/* ===== 列表项操作组 ===== */
+.tx-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+
+/* 删除按钮（危险操作，红色描边；二次确认后实心） */
+.btn-danger {
+  background: transparent; color: var(--danger); border: 1px solid var(--danger);
+  border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; flex-shrink: 0;
+}
+.btn-danger:hover { background: rgba(224, 108, 117, .12); }
+.btn-danger.on { background: var(--danger); color: #08130d; font-weight: 600; }
+.btn-danger:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ===== 完成勾选框 ===== */
+/* 用 appearance:none 重绘为「透明底方框」：未勾选时只有边框、无白块；
+   勾选时填充主题色并显示深色对勾。本 WebView2 对 radio 的 appearance:none 渲染可靠，
+   复选框同为 18×18 方盒，渲染稳定、不会再压成椭圆。
+   align-self:center：与多选圆形一致，随行高动态垂直居中（有/无备注皆居中）。 */
+.done-box {
+  display: inline-flex; align-items: center; flex-shrink: 0; align-self: center;
+}
+.done-box input {
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  flex: 0 0 18px; width: 18px; height: 18px; box-sizing: border-box; padding: 0;
+  margin: 0; border-radius: 4px;
+  border: 2px solid var(--text-muted); background: transparent;
+  cursor: pointer; position: relative;
+  transition: background .12s ease, border-color .12s ease;
+}
+.done-box input:hover { border-color: var(--accent); }
+.done-box input:checked { border-color: var(--accent); background: var(--accent); }
+.done-box input:checked::after {
+  content: ""; position: absolute; left: 5px; top: 1px;
+  width: 4px; height: 8px; border: solid #08130d; border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* 完成态：划线 + 虚化（保留在列表/树中，不消失） */
+.tx-item.done, .tx-child.done { opacity: .55; }
+.tx-item.done .tx-title, .tx-child.done .tx-title { text-decoration: line-through; }
+
+/* 优先级行底色（5=最高=红 → 1=最低=灰）；null 不上色 */
+.pri-row-5 { border-left: 4px solid #e06c75; background: rgba(224,108,117,.10); }
+.pri-row-4 { border-left: 4px solid #e5925a; background: rgba(229,146,90,.10); }
+.pri-row-3 { border-left: 4px solid #c9b44a; background: rgba(201,180,74,.10); }
+.pri-row-2 { border-left: 4px solid #5aa0e5; background: rgba(90,160,229,.10); }
+.pri-row-1 { border-left: 4px solid #8a8a8a; background: rgba(138,138,138,.10); }
+
+/* 提醒标签 */
+.tx-reminder {
+  display: inline-block; margin-top: 6px; font-size: 12px;
+  color: var(--text-muted); background: var(--bg-input);
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px;
+}
+
+/* 行内字段（时间要求 / 提醒 同行排列） */
+.inline-row { flex-direction: row; align-items: center; gap: 10px; flex-wrap: nowrap; }
+.inline-row > span { flex-shrink: 0; }
+.reminder-picker { position: relative; display: inline-flex; align-items: center; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }
+/* 原生日期 / 时间选择器：透明 input 仅用于承载值 + 程序化打开，不可见 */
+.reminder-input-hidden {
+  position: absolute; opacity: 0; pointer-events: none;
+  width: 1px; height: 1px; border: none; padding: 0; margin: 0;
+}
+.reminder-icon-btn {
+  width: 34px; height: 34px; padding: 0; flex-shrink: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.reminder-icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+.reminder-value { font-size: 14px; color: var(--text); cursor: pointer; }
+.reminder-value:hover { color: var(--accent); }
+.inline-row select.deadline-select { width: auto; min-width: 96px; flex-shrink: 0; }
+/* 转换弹窗：project 类型下的「父事务」下拉，占满字段宽度 */
+.field select.parent-select { width: 100%; }
+/* ===== 悬浮加号按钮（0.1.6 跳过 Inbox 直接新增） ===== */
+.fab-wrap { position: fixed; right: 28px; bottom: 28px; z-index: 40; }
+.fab {
+  width: 52px; height: 52px; border-radius: 50%;
+  background: var(--accent); color: #08130d;
+  border: none; font-size: 26px; line-height: 1;
+  cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.35);
+  display: flex; align-items: center; justify-content: center;
+}
+.fab:hover { filter: brightness(1.08); }
+.fab:active { transform: scale(.96); }
+
+/* ===== Project 事务健康度进度条（0.1.6） ===== */
+.proj-progress { margin-top: 8px; display: flex; align-items: center; gap: 10px; }
+.proj-progress-bar {
+  flex: 1; height: 8px; min-width: 80px;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 999px; overflow: hidden;
+}
+.proj-progress-fill {
+  height: 100%; background: var(--accent); border-radius: 999px;
+  transition: width .25s ease;
+}
+.proj-progress-text { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+
+/* ===== 拖拽排序（0.1.9：长按整条触发，指针事件手拖，不依赖原生 DnD） ===== */
+/* 整条可拖：默认光标不变，长按进入拖动后 body 光标切 grabbing（见 useListDrag） */
+.draggable-row { touch-action: pan-y; }
+.tx-item.dragging, .tx-child.dragging {
+  opacity: .4; box-shadow: none;
+}
+/* 落点指示：按插入方向在目标项 顶/底 高亮一条线 */
+.tx-item.drag-over-top, .tx-child.drag-over-top {
+  box-shadow: inset 0 3px 0 0 var(--accent);
+}
+.tx-item.drag-over-bottom, .tx-child.drag-over-bottom {
+  box-shadow: inset 0 -3px 0 0 var(--accent);
+}
+
+/* ===== 列表工具栏（0.1.11：排序按钮 + 多选 + 批量，一次性排序） ===== */
+.list-toolbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  /* 固定高度按「多选展开态」预留，避免展开 batch-bar 后工具栏变高把列表往下挤 */
+  margin: 10px 0 14px; min-height: 44px;
+}
+.dropdown { position: relative; display: inline-block; }
+.dropdown-toggle { min-width: 64px; }
+/* 主工具按钮（排序 / 多选）等宽，避免一长一短 */
+.tb-btn { min-width: 72px; text-align: center; }
+/* 多选后出现的批量功能：用边框框成一组，视觉上与主工具按钮分离 */
+.batch-bar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 5px 8px; border: 1px dashed var(--border);
+  border-radius: 10px; background: rgba(76,175,130,.06);
+}
+.dropdown-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
+  min-width: 120px; max-width: 180px;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.35);
+  display: flex; flex-direction: column; gap: 2px;
+}
+/* 0.1.19：拖拽进行中，工具栏与下拉菜单不可点，避免仍高亮/误触 */
+body.dragging-active .list-toolbar,
+body.dragging-active .dropdown-menu {
+  pointer-events: none;
+}
+
+.dropdown-item {
+  text-align: left; padding: 7px 10px; background: transparent;
+  color: var(--text); border: 1px solid transparent; border-radius: 6px;
+  font-size: 14px; cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.dropdown-item:hover { background: var(--bg-input); }
+
+/* 多选模式下整行可点选：手型光标 + 悬停淡底，提示可点整行 */
+.tx-item.sel-clickable, .tx-child.sel-clickable { cursor: pointer; }
+.tx-item.sel-clickable:hover, .tx-child.sel-clickable:hover { border-color: var(--accent); }
+
+/* 行首固定占位列：无论放「完成勾选框」「圆形多选区」还是空，都占同一 18px 宽，
+   保证切换模式时标题不左右移动。align-self:center 使控件随行高动态垂直居中
+   （有备注行变高、无备注时皆如此），标题保持顶对齐不动。 */
+.tx-gutter { flex: 0 0 18px; min-width: 18px; align-self: center; }
+/* Project 父事务有子事务时，正常模式下左侧不放控件，用占位符占满 gutter 宽度保持排版对齐 */
+.tx-gutter-placeholder { display: inline-block; width: 18px; height: 18px; }
+/* 多选选中框：用原生 <input type="radio">（appearance:none）作可见控件。
+   本 WebView2 对 radio 的 appearance:none 渲染可靠，必为正圆；
+   与完成框同样 18×18、align-self:center 随行高动态垂直居中（有/无备注皆居中）。 */
+.sel-box { display: inline-flex; align-items: center; align-self: center; }
+.sel-box input {
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  flex: 0 0 18px; width: 18px; height: 18px; box-sizing: border-box; padding: 0;
+  margin: 0; border-radius: 50%;
+  border: 2px solid var(--text-muted); background: transparent;
+  cursor: pointer; position: relative;
+  transition: background .12s ease, border-color .12s ease;
+}
+.sel-box input:hover { border-color: var(--accent); }
+.sel-box input:checked { border-color: var(--accent); }
+/* 选中时圆内显示一个实心圆点（Radio 风格） */
+.sel-box input:checked::after {
+  content: ""; position: absolute; left: 50%; top: 50%;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); transform: translate(-50%, -50%);
+}
+/* 多选选中态：整行高亮描边 */
+.tx-item.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* ===== 左下角下拉菜单（0.1.10：回收站 / 主题 / 版本） ===== */
+.side-drop { position: relative; margin-top: 16px; }
+.side-drop-btn {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 9px 10px; background: var(--bg-input);
+  color: var(--text-muted); border: 1px solid var(--border);
+  border-radius: 8px; font-size: 14px; cursor: pointer; font-family: inherit;
+}
+.side-drop-btn:hover { color: var(--text); border-color: var(--accent); }
+.side-drop-caret { font-size: 12px; }
+/* 菜单改用 fixed 悬浮：脱离侧栏滚动容器，浮在左右两栏之上、始终可见，
+   也不会因内容过宽在侧栏里撑出横向滚动条（0.1.11） */
+.side-menu {
+  position: fixed; left: 12px; bottom: 58px;
+  min-width: 220px; width: max-content; max-width: 360px;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.45);
+  display: flex; flex-direction: column; gap: 6px; z-index: 60;
+}
+.side-menu-item {
+  text-align: left; padding: 8px 10px; background: transparent;
+  color: var(--text); border: 1px solid transparent; border-radius: 8px;
+  font-size: 14px; cursor: pointer; font-family: inherit;
+}
+.side-menu-item:hover { background: var(--bg-input); }
+.side-menu-sep { height: 1px; background: var(--border); margin: 2px 0; }
+.side-menu-label { font-size: 12px; color: var(--text-muted); padding: 2px 4px; }
+/* 0.1.16：数据栏一行搞定——左侧标签 + 右侧导出/导入两个按钮 */
+.side-menu-data { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 4px; }
+.side-menu-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.side-menu-item.compact { padding: 5px 10px; font-size: 12px; border: 1px solid var(--border); }
+/* 0.1.16：主题栏也一行——左侧标签 + 右侧三主题按钮 */
+.side-menu-theme-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 4px; }
+.side-menu-theme { display: flex; gap: 6px; padding: 0 4px; flex-shrink: 0; flex-wrap: nowrap; }
+.theme-opt {
+  flex: 0 0 auto; padding: 6px 12px; background: var(--bg-input); color: var(--text-muted);
+  border: 1px solid var(--border); border-radius: 8px; font-size: 12px; cursor: pointer; font-family: inherit;
+  white-space: nowrap;
+}
+.theme-opt.on { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.side-menu-motto {
+  font-size: 14px; line-height: 1.5; color: var(--text-muted);
+  padding: 4px 6px; font-style: italic; font-weight: 700; opacity: .95;
+  white-space: nowrap;
+}
+.side-menu-version { font-size: 12px; color: var(--text-muted); padding: 2px 4px; }
+/* 开机自启动开关行（0.1.13） */
+.side-menu-item.autostart-row {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.side-menu-item.autostart-row .toggle {
+  font-size: 12px; padding: 1px 10px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--text-muted);
+}
+.side-menu-item.autostart-row .toggle.on {
+  color: #08130d; background: var(--accent); border-color: var(--accent); font-weight: 600;
+}
+
+/* ===== 设置弹窗（开关类设置聚合容器，0.2.0） ===== */
+.settings-list { display: flex; flex-direction: column; gap: 10px; }
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; text-align: left; cursor: pointer;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px;
+  transition: border-color .2s ease, background .2s ease;
+}
+/* 开发模式下只读行（自启动等）：置灰、禁用指针 */
+.settings-row.disabled {
+  cursor: not-allowed; opacity: .55;
+  background: transparent;
+}
+.settings-row:hover { border-color: var(--accent); }
+.settings-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.settings-row-text { display: flex; flex-direction: column; gap: 3px; }
+.settings-row-label { font-size: 14px; font-weight: 600; color: var(--text); }
+.settings-row-hint { font-size: 12px; line-height: 1.4; }
+/* 滑动开关（纯 CSS，跟随 .on 状态切换） */
+.switch {
+  position: relative; flex-shrink: 0;
+  width: 44px; height: 24px; border-radius: 999px;
+  background: var(--border);
+  transition: background .25s cubic-bezier(.16, 1, .3, 1);
+}
+.switch.on { background: var(--accent); }
+.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+  transition: transform .25s cubic-bezier(.16, 1, .3, 1);
+}
+.switch.on::after { transform: translateX(20px); }
+
+/* ===== 数据导入导出提示 toast（0.1.13） ===== */
+.toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+  z-index: 80; background: var(--bg-elev); color: var(--text);
+  border: 1px solid var(--accent); border-radius: 10px;
+  padding: 10px 18px; font-size: 14px; box-shadow: 0 8px 28px rgba(0,0,0,.4);
+  display: flex; align-items: center; gap: 12px;
+}
+/* 0.2.0：toast 内联动作按钮（如「不再提示」） */
+.toast-action {
+  flex-shrink: 0; background: transparent; color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 6px;
+  padding: 2px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
+  transition: background .2s ease, color .2s ease;
+}
+.toast-action:hover { background: var(--accent); color: #08130d; }
+
+/* ===== 关闭确认框（0.2.0） ===== */
+.close-confirm {
+  display: flex; flex-direction: column; gap: 14px;
+}
+.close-confirm-tip {
+  margin: 0; font-size: 14px; color: var(--text);
+}
+.close-confirm-ask {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-muted, var(--text)); cursor: pointer; user-select: none;
+}
+.close-confirm-ask input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.close-confirm-actions {
+  display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px;
+}
+.close-confirm-actions .btn-ghost,
+.close-confirm-actions .btn-danger {
+  padding: 8px 16px; font-size: 13px;
+}
+
+/* ===== 批量转换进度（0.1.13） ===== */
+.batch-progress {
+  font-size: 12px; color: var(--accent); background: rgba(76,175,130,.12);
+  border: 1px solid rgba(76,175,130,.4); border-radius: 999px; padding: 2px 10px;
+}
+
+/* ===== 快捷键说明弹窗（0.1.13） ===== */
+.shortcut-tip { margin: 0 0 4px; font-size: 12px; line-height: 1.5; }
+.shortcut-table { width: 100%; border-collapse: collapse; }
+.shortcut-table td { padding: 7px 6px; vertical-align: middle; border-bottom: 1px solid var(--border); }
+.shortcut-table tr:last-child td { border-bottom: none; }
+.shortcut-key { width: 1%; white-space: nowrap; }
+.shortcut-desc { font-size: 14px; }
+.kbd {
+  display: inline-block; min-width: 22px; text-align: center;
+  padding: 2px 8px; font-size: 12px; font-family: inherit;
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px;
+}
+
+/* ===== Project 父事务派生完成指示（0.1.13） ===== */
+/* 有子事务时：代替复选框，居中显示一个小圆点；全部子事务完成时亮起 */
+.proj-done-ind {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--border); color: var(--accent);
+  font-size: 12px; line-height: 1; box-sizing: border-box;
+}
+.proj-done-ind.on { border-color: var(--accent); background: rgba(76,175,130,.18); }
+
+/* ===== 主题弹窗 / 数据管理弹窗（0.1.20） ===== */
+.theme-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 6px; }
+.theme-card {
+  position: relative; display: flex; flex-direction: column; gap: 4px;
+  align-items: flex-start; text-align: left;
+  padding: 14px 12px; border-radius: 12px;
+  background: var(--bg-input); border: 1px solid var(--border);
+  cursor: pointer; transition: border-color .15s, background .15s, transform .12s;
+}
+.theme-card:hover { transform: translateY(-2px); }
+.theme-card.on { border-color: var(--accent); background: rgba(76,175,130,.14); }
+.theme-card-label { font-size: 14px; font-weight: 600; }
+.theme-card-hint { font-size: 12px; line-height: 1.4; }
+.theme-card-check {
+  position: absolute; top: 8px; right: 10px;
+  color: var(--accent); font-size: 14px; font-weight: 700;
+}
+.data-actions { display: flex; gap: 10px; margin: 10px 0 4px; }
+.data-actions .btn-primary, .data-actions .btn-ghost, .data-actions .btn-danger { flex: 1; }
+.data-warn { margin: 8px 0 0; font-size: 12px; line-height: 1.55; }
+
+/* ===== 回收站弹窗（0.1.10 / 0.1.11） ===== */
+.trash-list .tx-item { opacity: .9; }
+.trash-meta { font-size: 12px; margin-top: 4px; white-space: pre-wrap; }
+.modal-panel {
+  max-height: min(420px, 55vh);
+  overflow-y: auto;
+}
+
+/* ===== 浅色主题（跟随系统 / 手动浅色） ===== */
+:root[data-theme="light"] {
+  --bg: #f5f5f5;
+  --bg-elev: #ffffff;
+  --bg-input: #ececec;
+  --border: #d8d8d8;
+  --text: #1e1e1e;
+  --text-muted: #6a6a6a;
+  --accent: #2f9e6c;
+  --danger: #d64550;
+  color-scheme: light; /* 浅色主题时原生滚动条/控件走浅色 */
+}
+
+/* ===== 0.1.16：Next Actions 分栏（左=未分配时段，右=早/午/晚） ===== */
+.next-split {
+  display: flex; gap: 16px; align-items: stretch;
+  flex: 1; min-height: 0; overflow: hidden; padding-bottom: 8px;
+}
+.next-left {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  background: rgba(0,0,0,.12); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px;
+}
+/* 右栏：早/午/晚三时段做成「收纳文件夹」——一次只展开一个，其余收成文件夹标签页 */
+.next-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+/* 文件夹本体：合上时整洁如一只合上的文件夹 */
+.next-slot {
+  flex: 0 0 auto; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px;
+  transition: box-shadow .15s ease, transform .15s ease, border-color .15s ease, opacity .15s ease;
+}
+/* 展开的时段：占满右栏剩余高度，列表独立滚动，并"弹出"高亮成当前打开的文件夹 */
+.next-slot:not(.collapsed) { flex: 1 1 0; min-height: 0; border-color: var(--accent); box-shadow: 0 8px 22px rgba(0,0,0,.20); }
+/* 合上的文件夹：整齐、悬停轻微抬起，像从一叠文件夹里抽出来 */
+.next-slot.collapsed { opacity: .92; }
+.next-slot.collapsed:hover { transform: translateY(-1px); opacity: 1; box-shadow: 0 5px 14px rgba(0,0,0,.16); }
+/* 文件夹标题条：可点击切换展开/收起；打开时像被翻开的标签页（accent 底色 + 分隔线） */
+.next-col-head.folder-head {
+  cursor: pointer; user-select: none; flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 12px; font-size: 14px; font-weight: 600; color: var(--text);
+}
+.next-slot:not(.collapsed) .next-col-head.folder-head {
+  background: var(--bg-elev); /* color-mix 不支持时的兜底 */
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-bottom: 1px solid var(--border); border-radius: 9px 9px 0 0;
+}
+/* 打开的文件夹内袋：列表区做成微微内凹的"口袋"感 */
+.next-slot:not(.collapsed) > .tx-list {
+  background: var(--bg); border-radius: 8px; margin: 6px 4px 10px; padding: 8px;
+  box-shadow: inset 0 1px 5px rgba(0,0,0,.14);
+}
+.folder-name { flex: 1; }
+.folder-chevron { font-size: 28px; width: 28px; height: 28px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; margin-left: auto; color: var(--text-muted); transition: transform .15s ease; }
+.folder-name { flex: 1; }
+.slot-selectall { padding: 2px 10px; font-size: 12px; line-height: 1.6; border: 1px solid var(--border); flex-shrink: 0; }
+/* 让左右栏内的列表各自撑满剩余高度并独立滚动 */
+.next-left > .tx-list, .next-slot > .tx-list { flex: 1; min-height: 0; overflow-y: auto; margin-top: 6px; padding: 0 4px 8px; }
+.next-empty { padding: 8px 0; font-size: 12px; }
+/* 拖拽悬停高亮（左栏或某时段） */
+.drop-over { outline: 2px dashed var(--accent); outline-offset: -3px; }
+/* 拖拽浮层（drag ghost）：长按时跟随光标、半透明浮起、轻微旋转，增强拖拽手感 */
+.drag-ghost {
+  position: fixed; z-index: 9999; pointer-events: none;
+  transform: translate(-14px, -14px) rotate(-2.5deg);
+  max-width: 240px; min-width: 120px;
+  background: var(--bg-elev); border: 1px solid var(--accent);
+  border-radius: 10px; padding: 8px 12px;
+  box-shadow: 0 10px 28px rgba(0,0,0,.45);
+  display: flex; flex-direction: column; gap: 2px;
+  opacity: .96; font-size: 14px;
+}
+.drag-ghost .tx-title { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drag-ghost .tx-deadline { font-size: 12px; }
+/* 折叠箭头（Project 父事务展开/收起） */
+.tx-caret {
+  cursor: pointer; color: var(--text-muted); font-size: 28px; flex-shrink: 0;
+  user-select: none; width: 24px; height: 24px; display: inline-flex;
+  align-items: center; justify-content: center; border-radius: 6px;
+}
+.tx-caret:hover { background: rgba(127,127,127,.18); color: var(--text); }
+
+/* ===== 0.1.16：启动弹窗「今天」 ===== */
+.startup-date { font-size: 16px; margin: 4px 0 6px; }
+.startup-sub { margin: 0 0 14px; }
+.startup-slots { display: flex; gap: 12px; }
+.startup-slot {
+  flex: 1; min-height: 90px;
+  background: rgba(0,0,0,.14); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px;
+}
+.startup-slot-head { font-weight: 600; font-size: 14px; margin-bottom: 8px; color: var(--text); }
+.startup-empty { font-size: 12px; }
+.startup-task-list { margin: 0; padding-left: 18px; font-size: 14px; }
+.startup-task-list li { margin: 3px 0; }

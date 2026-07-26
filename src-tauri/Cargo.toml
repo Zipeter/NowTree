@@ -1,0 +1,38 @@
+[package]
+name = "nowtree"
+version = "1.0.0"
+description = "NowTree - 个人事务管理系统"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] } # 0.1.19：sync_id 生成
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+
+# 同时产出「库 crate (nowtree_lib)」与「二进制 (nowtree)」。
+# main.rs 调用 nowtree_lib::run()，故必须显式声明 lib 名称。
+[lib]
+name = "nowtree_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "NowTree"
+path = "src/main.rs"

@@ -1,0 +1,73 @@
+# ============================================================
+# NowTree .gitignore
+# 栈：Tauri v2 + React + TypeScript + Vite + Rust
+# ============================================================
+
+# ---------- 前端依赖 ----------
+node_modules/
+.pnp/
+.pnp.js
+.yarn/
+
+# ---------- 前端构建产物 ----------
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# ---------- Tauri / Rust 构建 ----------
+# Rust 编译产物（体积巨大，必须忽略）
+/src-tauri/target/
+target/
+# Rust 备份文件
+**/*.rs.bk
+# Tauri 自动生成的代码（gen/ 由 tauri 命令生成）
+/src-tauri/gen/
+# 注意：Cargo.lock 对「应用」应当提交以保证可复现构建，此处不忽略。
+
+# ---------- 本地数据库（SQLite，存于本机，勿上传） ----------
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.sqlite-journal
+*.wal
+
+# ---------- 日志 ----------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+cargo-debug.log*
+
+# ---------- 环境变量 / 密钥 ----------
+.env
+.env.*
+!.env.example
+
+# ---------- 编辑器 / 系统文件 ----------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ---------- 项目私有记忆（保持本地，不上传 GitHub） ----------
+.workbuddy/
+
+# ---------- 临时 / 本地工具 / 个人笔记 ----------
+temp/
+
+# ---------- AI 给的提醒 / 步骤 / 流程（纯本地参考，不进仓库） ----------
+dev-notes/
+
+# ---------- 其他 ----------
+*.pdb
+
+# ---------- 一次性发版文档（仅本地参考，不进仓库） ----------
+RELEASE_NOTES*.md
+CHANGELOG_DRAFT*.md
