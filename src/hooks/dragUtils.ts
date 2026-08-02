@@ -3,6 +3,8 @@
 // 又完全不动任何已验证的拖拽行为（编排逻辑、class 高亮、计时器都留在各自文件）。
 export const LONG_PRESS_MS = 220; // 长按阈值
 export const DRAG_THRESHOLD = 10; // 长按前移动超过此像素视为滑动/滚动，取消拖拽
+export const AUTOSCROLL_EDGE_PX = 52; // 拖到列表上下边缘多近才触发自动滚动
+export const AUTOSCROLL_STEP_PX = 3; // 自动滚动每帧滚动的像素（正负表示方向）
 
 // 拖拽行的列表根（.tx-list 或 .tx-children），用于限定自动滚动的首末行。
 export function listRootOf(el: Element | null): HTMLElement | null {
@@ -82,4 +84,25 @@ export function nearestRowEl(
   const best = nearestRowId(rects, clientY, new Set(rects.map((r) => r.id)), selfId);
   if (best == null) return null;
   return root.querySelector(`[data-drag-idx="${best}"]`) as HTMLElement | null;
+}
+
+// 拖拽视觉托管：进入/退出拖拽时统一设置 body 的 userSelect / cursor 与 dragging-active class。
+// useListDrag 与 NextView.startSlotDrag 共用，确保两类拖拽的手感（禁止选区、抓取光标、全局 class）一致。
+// 对应报告候选 E「共享生命周期与高亮托管」。
+export function enterDragVisuals() {
+  document.body.style.userSelect = "none";
+  document.body.style.cursor = "grabbing";
+  document.body.classList.add("dragging-active");
+}
+
+export function exitDragVisuals() {
+  document.body.style.userSelect = "";
+  document.body.style.cursor = "";
+  document.body.classList.remove("dragging-active");
+}
+
+// 长按/拖拽进行中，若位移超过阈值则视为「滑动 / 滚动 / 选择文字」而非拖拽，应取消。
+// 两套装都需此判定，抽为单一真相源避免阈值漂移。
+export function isBeyondThreshold(dx: number, dy: number): boolean {
+  return Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD;
 }

@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { appDataDir, join } from "@tauri-apps/api/path";
 import InboxView from "./components/InboxView";
 import CategoryListView from "./components/CategoryListView";
 import ProjectListView from "./components/ProjectListView";
@@ -15,8 +14,10 @@ import Modal from "./components/common/Modal";
 import { useTxStore } from "./store/useTxStore";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import type { TimeSlot } from "./types/transaction";
+import { CATEGORIES, CATEGORY_META } from "./types/transaction";
 import { useToast } from "./hooks/useToast";
 import { useTheme } from "./hooks/useTheme";
+import { useShell } from "./hooks/useShell";
 import {
   useReminderScan,
   useDeadlineNormalize,
@@ -27,12 +28,13 @@ import {
 // inbox → InboxView；project → 专用 ProjectListView（树状）；next/waiting/someday → 通用 CategoryListView。
 type ViewKey = "inbox" | "next" | "project" | "waiting" | "someday";
 
+// 侧边栏导航项：inbox 固定；四类从 CATEGORY_META 派生 navLabel（C4：单一来源，新增类别只改一处）。
 const NAV: { key: ViewKey; label: string }[] = [
   { key: "inbox", label: "Inbox" },
-  { key: "next", label: "Next Actions" },
-  { key: "project", label: "Projects" },
-  { key: "waiting", label: "Waiting for" },
-  { key: "someday", label: "Someday" },
+  ...CATEGORIES.map((c) => ({
+    key: (c === "next_action" ? "next" : c) as ViewKey,
+    label: CATEGORY_META[c].navLabel,
+  })),
 ];
 
 export default function App() {
@@ -46,25 +48,13 @@ export default function App() {
   // 0.1.20：主题弹窗 / 数据管理弹窗
   const [themeOpen, setThemeOpen] = useState(false);
   const [dataOpen, setDataOpen] = useState(false);
-  // 0.2.0：导入确认弹窗的元信息（选文件后回填，确认再真正导入）
-  const [importMeta, setImportMeta] = useState<{
-    path: string;
-    exported_at: string | null;
-    count: number;
-    latest_updated: string | null;
-  } | null>(null);
-  // 0.2.0：清空数据二次确认弹窗
-  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   // 0.2.0：设置弹窗（聚合所有开关类设置：开机自启动 / 勾选提示音…）
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [autostart, setAutostart] = useState(false);
-  // 0.2.0：勾选提示音开关（纯前端偏好，默认开启，存 localStorage）
-  const [checkSoundOn, setCheckSoundOn] = useState(true);
-  // 0.2.0：关闭确认框（窗口可见时弹，问「托盘 / 退出」）。dontAskAgain 即「不再提示」。
-  const [closeConfirm, setCloseConfirm] = useState(false);
-  const [dontAskAgain, setDontAskAgain] = useState(false);
   // 0.1.16：每次启动弹「今天」介绍弹窗（开发刷新也会弹）
   const [startupOpen, setStartupOpen] = useState(true);
+  // C11 修复：运行时计算真实 SQLite 文件路径，替代原硬编码（含未替换占位符「你」）。
+  // 适配不同用户名 / 系统，浏览器预览环境则提示数据仅存内存。
+  const [dbPath, setDbPath] = useState<string>("");
   const menuRef = useRef<HTMLDivElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const loadActive = useTxStore((s) => s.loadActive);
@@ -96,65 +86,32 @@ export default function App() {
     })();
   }, [loadActive]);
 
-  // 0.2.0：后端拦截 X 关闭后 emit "window-close-requested"（此时窗口仍可见、未被隐藏）。
-  // 若已「不再提示」→ 按记住的默认（托盘/退出）直接 invoke 执行；
-  // 否则弹模态确认框，由用户选择后再 invoke 对应命令。
+  // C11 修复：挂载时解析真实数据文件绝对路径（依赖 Tauri 的 appDataDir，
+  // 由 identifier 决定，不随用户名/系统写死）。浏览器预览环境给出内存提示。
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let cancelled = false;
     (async () => {
       try {
-        unlisten = await listen("window-close-requested", () => {
-          let dismissed = false;
-          let choice = "tray";
-          try {
-            dismissed = localStorage.getItem("nowtree_tray_hint_dismissed") === "1";
-            choice = localStorage.getItem("nowtree_tray_choice") || "tray";
-          } catch { /* ignore */ }
-          if (dismissed) {
-            if (choice === "exit") invoke("quit_app");
-            else invoke("minimize_to_tray");
-            return;
-          }
-          setCloseConfirm(true);
-        });
-      } catch { /* 非 Tauri 环境（浏览器）忽略 */ }
-    })();
-    return () => { unlisten?.(); };
-  }, []);
-
-  // 关闭确认框：用户明确选择「最小化到托盘」或「退出」；勾了「不再提示」则记住该选择。
-  const chooseClose = (action: "tray" | "exit") => {
-    if (dontAskAgain) {
-      try {
-        localStorage.setItem("nowtree_tray_hint_dismissed", "1");
-        localStorage.setItem("nowtree_tray_choice", action);
-      } catch { /* ignore */ }
-    }
-    setCloseConfirm(false);
-    setDontAskAgain(false);
-    invoke(action === "exit" ? "quit_app" : "minimize_to_tray");
-  };
-
-  // 0.1.13：进入时读取开机自启动状态（非 Tauri 环境静默忽略）
-  useEffect(() => {
-    (async () => {
-      try {
-        const ok = await invoke<boolean>("get_autostart");
-        setAutostart(ok);
+        if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+          const dir = await appDataDir();
+          const full = await join(dir, "nowtree.sqlite");
+          if (!cancelled) setDbPath(full);
+        } else {
+          if (!cancelled)
+            setDbPath("（浏览器预览模式：数据仅存于内存，不写入文件）");
+        }
       } catch {
-        /* 浏览器 / 插件未就绪：保持 false */
+        if (!cancelled) setDbPath("（无法读取数据文件路径）");
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // 0.2.0：进入时读取勾选提示音开关（localStorage，默认开启）
-  useEffect(() => {
-    try {
-      setCheckSoundOn(localStorage.getItem("nowtree_check_sound") !== "off");
-    } catch {
-      /* localStorage 不可用：保持默认开启 */
-    }
-  }, []);
+  // 0.2.0：后端拦截 X 关闭后 emit "window-close-requested" 的监听、关闭确认逻辑、
+  // 自启动 / 提示音读取、以及导入导出 / 清空 / 自启动 / 提示音 / 窗口关闭等操作，
+  // 已统一收口到 useShell（见下方 isDev 之后调用）。
 
   // 0.1.13：点击左下角菜单外部区域自动关闭菜单
   useEffect(() => {
@@ -176,92 +133,9 @@ export default function App() {
   // release 版本该值为 false，前端内嵌在 exe 中；dev 版本为 true，依赖 localhost:1420。
   const isDev = import.meta.env.DEV;
 
-  // 0.1.13：数据导出 / 导入（经 Rust 命令调用系统文件选择器）
-  async function handleExport() {
-    try {
-      const res = await invoke<string>("export_data");
-      showToast(res === "cancelled" ? "已取消导出" : "数据已导出");
-    } catch (e) {
-      showToast("导出失败：" + (e as Error).message);
-      return; // 失败保持窗口以便重试
-    }
-    setDataOpen(false); // 0.2.0：完成后自动关闭数据管理窗口
-  }
-  async function handleImport() {
-    try {
-      // 0.2.0：两步走——先选文件读元信息，关闭数据窗后弹确认框显示「哪天备份 / 多少条」，
-      // 用户确认后再真正导入（避免误覆盖当前数据）。
-      const meta = await invoke<{
-        path: string;
-        exported_at: string | null;
-        count: number;
-        latest_updated: string | null;
-      } | null>("read_backup_meta");
-      if (!meta) {
-        showToast("已取消导入");
-        setDataOpen(false);
-        return;
-      }
-      setDataOpen(false);
-      setImportMeta(meta);
-    } catch (e) {
-      showToast("读取备份失败：" + (e as Error).message);
-    }
-  }
-  async function confirmImport() {
-    if (!importMeta) return;
-    try {
-      const res = await invoke<string>("import_data", { path: importMeta.path });
-      await Promise.all([loadActive(), loadInbox(), loadTrash()]);
-      const m = res.match(/(\d+)/);
-      showToast(`成功导入 ${m ? m[1] : "?"} 条事务`);
-    } catch (e) {
-      showToast("导入失败：" + (e as Error).message);
-    } finally {
-      setImportMeta(null);
-    }
-  }
-  async function confirmReset() {
-    try {
-      await invoke("reset_all_data");
-      await Promise.all([loadActive(), loadInbox(), loadTrash()]);
-      showToast("已清空所有数据");
-    } catch (e) {
-      showToast("清空失败：" + (e as Error).message);
-    } finally {
-      setResetConfirmOpen(false);
-      setDataOpen(false);
-    }
-  }
-  async function toggleAutostart() {
-    // 开发模式完全禁止修改自启动：dev 二进制指向 localhost:1420，且会与 release
-    // 共用同一注册表键（productName 均为 NowTree）。在 dev 中「开启」会指向坏掉的
-    // dev 二进制导致白屏；在 dev 中「关闭」会误删 release 已注册的自启动。
-    // 因此 dev 版对自启动只读，统一由 release 版本（nowtree.exe）管理。
-    if (isDev) {
-      showToast("开发模式不能修改自启动，请在 release 版本（nowtree.exe）中设置");
-      return;
-    }
-    try {
-      const next = !autostart;
-      const ok = await invoke<boolean>("set_autostart", { enable: next });
-      setAutostart(ok);
-      showToast(ok ? "已开启开机自启动" : "已关闭开机自启动");
-    } catch (e) {
-      showToast("自启动设置失败：" + (e as Error).message);
-    }
-  }
-
-  // 0.2.0：切换勾选提示音（仅写 localStorage，无需 Rust）
-  function toggleCheckSound() {
-    const next = !checkSoundOn;
-    setCheckSoundOn(next);
-    try {
-      localStorage.setItem("nowtree_check_sound", next ? "on" : "off");
-    } catch {
-      /* 忽略存储异常 */
-    }
-  }
+  // C9：外壳操作（导入导出 / 清空 / 自启动 / 提示音 / 窗口关闭）收口到 useShell，
+  // 避免 App 直接散落 invoke / localStorage / 窗口事件监听。
+  const shell = useShell({ showToast, loadActive, loadInbox, loadTrash, isDev, setDataOpen });
 
   // 快捷键：1-5 切换视图；Enter 打开当前视图的加号（nowtree:quick-add 由各视图监听）
   useEffect(() => {
@@ -392,7 +266,7 @@ export default function App() {
               </button>
               <div className="side-menu-sep" />
               <div className="side-menu-motto">种一棵树最好的时间是十年前，其次是现在</div>
-              <div className="side-menu-version">v1.0.0 · 本地 SQLite</div>
+              <div className="side-menu-version">v1.0.1 · 本地 SQLite</div>
             </div>
           )}
         </div>
@@ -414,14 +288,14 @@ export default function App() {
       )}
       {dataOpen && (
         <DataModal
-          onExport={handleExport}
-          onImport={handleImport}
-          onReset={() => setResetConfirmOpen(true)}
+          onExport={shell.handleExport}
+          onImport={shell.handleImport}
+          onReset={() => shell.setResetConfirmOpen(true)}
           onClose={() => setDataOpen(false)}
         />
       )}
-      {resetConfirmOpen && (
-        <Modal title="确认清空所有数据" onClose={() => setResetConfirmOpen(false)}>
+      {shell.resetConfirmOpen && (
+        <Modal title="确认清空所有数据" onClose={() => shell.setResetConfirmOpen(false)}>
           <div className="close-confirm">
             <p className="close-confirm-tip">
               此操作将<strong>永久删除所有事务</strong>，包括 Inbox、Next Actions、Projects、Waiting、Someday 和回收站中的内容。
@@ -430,38 +304,38 @@ export default function App() {
               删除后无法恢复；若还需要保留记录，请先导出备份。
             </p>
             <p className="muted close-confirm-tip" style={{ fontSize: 12 }}>
-              数据文件位置：C:\Users\你\AppData\Roaming\com.nowtree.app\nowtree.sqlite
+              数据文件位置：{dbPath || "…"}
             </p>
             <div className="close-confirm-actions">
-              <button type="button" className="btn-ghost" onClick={() => setResetConfirmOpen(false)}>
+              <button type="button" className="btn-ghost" onClick={() => shell.setResetConfirmOpen(false)}>
                 取消
               </button>
-              <button type="button" className="btn-danger" onClick={confirmReset}>
+              <button type="button" className="btn-danger" onClick={shell.confirmReset}>
                 确认清空
               </button>
             </div>
           </div>
         </Modal>
       )}
-      {importMeta && (
-        <Modal title="确认导入备份" onClose={() => setImportMeta(null)}>
+      {shell.importMeta && (
+        <Modal title="确认导入备份" onClose={shell.dismissImport}>
           <div className="close-confirm">
             <p className="close-confirm-tip">
-              此备份{importMeta.exported_at
-                ? `生成于 ${new Date(importMeta.exported_at).toLocaleString("zh-CN")}`
-                : importMeta.latest_updated
-                  ? `最新记录时间为 ${new Date(importMeta.latest_updated).toLocaleString("zh-CN")}（旧版无备份日期）`
+              此备份{shell.importMeta.exported_at
+                ? `生成于 ${new Date(shell.importMeta.exported_at).toLocaleString("zh-CN")}`
+                : shell.importMeta.latest_updated
+                  ? `最新记录时间为 ${new Date(shell.importMeta.latest_updated).toLocaleString("zh-CN")}（旧版无备份日期）`
                   : "日期未知"}
-              ，含 <strong>{importMeta.count}</strong> 条事务。
+              ，含 <strong>{shell.importMeta.count}</strong> 条事务。
             </p>
             <p className="muted close-confirm-tip">
               导入将以备份内容<strong>覆盖当前全部数据</strong>，且不可撤销。
             </p>
             <div className="close-confirm-actions">
-              <button type="button" className="btn-ghost" onClick={() => setImportMeta(null)}>
+              <button type="button" className="btn-ghost" onClick={shell.dismissImport}>
                 取消
               </button>
-              <button type="button" className="btn-danger" onClick={confirmImport}>
+              <button type="button" className="btn-danger" onClick={shell.confirmImport}>
                 确认导入
               </button>
             </div>
@@ -469,27 +343,27 @@ export default function App() {
         </Modal>
       )}
         {settingsOpen && (
-          <SettingsModal
-            autostart={autostart}
-            onToggleAutostart={toggleAutostart}
-            checkSoundOn={checkSoundOn}
-            onToggleCheckSound={toggleCheckSound}
-            isDev={isDev}
-            onClose={() => setSettingsOpen(false)}
-          />
+        <SettingsModal
+          autostart={shell.autostart}
+          onToggleAutostart={shell.toggleAutostart}
+          checkSoundOn={shell.checkSoundOn}
+          onToggleCheckSound={shell.toggleCheckSound}
+          isDev={isDev}
+          onClose={() => setSettingsOpen(false)}
+        />
         )}
-      {closeConfirm && (
+      {shell.closeConfirm && (
         <Modal
           title="关闭 NowTree"
-          onClose={() => { setCloseConfirm(false); setDontAskAgain(false); }}
+          onClose={() => { shell.setCloseConfirm(false); shell.setDontAskAgain(false); }}
         >
           <div className="close-confirm">
             <p className="close-confirm-tip">要最小化到托盘，还是退出程序？</p>
             <label className="close-confirm-ask">
               <input
                 type="checkbox"
-                checked={dontAskAgain}
-                onChange={(e) => setDontAskAgain(e.target.checked)}
+                checked={shell.dontAskAgain}
+                onChange={(e) => shell.setDontAskAgain(e.target.checked)}
               />
               不再提示（按我选的默认执行）
             </label>
@@ -497,14 +371,14 @@ export default function App() {
               <button
                 type="button"
                 className="btn-ghost"
-                onClick={() => chooseClose("tray")}
+                onClick={() => shell.chooseClose("tray")}
               >
                 最小化到托盘
               </button>
               <button
                 type="button"
                 className="btn-danger"
-                onClick={() => chooseClose("exit")}
+                onClick={() => shell.chooseClose("exit")}
               >
                 退出
               </button>

@@ -576,9 +576,14 @@ pub fn read_backup_meta(app: tauri::AppHandle) -> Result<Option<BackupMeta>, Str
 }
 
 // 导入：接收已选文件路径，逐行 upsert（同 id 覆盖，新 id 插入），保留父子关系。
-// 返回 "imported N"。文件选择由 read_backup_meta 先行完成（以便确认弹窗）。
+// 返回结构化 { count }（C10：替代原先 "imported N" 字符串，前端不再靠正则抠数字）。
+// 文件选择由 read_backup_meta 先行完成（以便确认弹窗）。
+#[derive(Serialize)]
+pub struct ImportResult {
+    pub count: usize,
+}
 #[tauri::command]
-pub fn import_data(state: State<Db>, path: String) -> Result<String, String> {
+pub fn import_data(state: State<Db>, path: String) -> Result<ImportResult, String> {
     let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let rows = parse_import_rows(&content)?;
     let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -615,7 +620,7 @@ pub fn import_data(state: State<Db>, path: String) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     }
     drop(conn);
-    Ok(format!("imported {}", rows.len()))
+    Ok(ImportResult { count: rows.len() })
 }
 
 // ---- 开机自启动（0.1.13，借助 tauri-plugin-autostart） ----

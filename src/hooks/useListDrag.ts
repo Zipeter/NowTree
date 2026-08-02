@@ -2,11 +2,15 @@ import { useCallback, useRef, useState } from "react";
 import type React from "react";
 import {
   LONG_PRESS_MS,
-  DRAG_THRESHOLD,
+  AUTOSCROLL_EDGE_PX,
+  AUTOSCROLL_STEP_PX,
   listRootOf,
   findScrollableAncestor,
   rowHalfOf,
   nearestRowEl,
+  enterDragVisuals,
+  exitDragVisuals,
+  isBeyondThreshold,
 } from "./dragUtils";
 
 // 基于 Pointer Events 的列表拖拽排序（不依赖 HTML5 原生 DnD，规避 WebView 里"禁止"光标）。
@@ -90,10 +94,7 @@ export function useListDrag() {
           window.removeEventListener("pointerup", onUp);
         };
         const onMove = (ev: PointerEvent) => {
-          if (
-            Math.abs(ev.clientX - startX) > DRAG_THRESHOLD ||
-            Math.abs(ev.clientY - startY) > DRAG_THRESHOLD
-          ) {
+          if (isBeyondThreshold(ev.clientX - startX, ev.clientY - startY)) {
             cleanup();
           }
         };
@@ -166,14 +167,14 @@ export function useListDrag() {
       const list = ref.current.scroller;
         if (list) {
           const r = list.getBoundingClientRect();
-          const m = 52; // 边缘触发区高度
+          const m = AUTOSCROLL_EDGE_PX; // 边缘触发区高度
           const nearBottom = ev.clientY > r.bottom - m;
           const nearTop = ev.clientY < r.top + m;
           // 0.1.19：光标必须「横向」也落在滚动容器内，才滚动/标边行。
           //   否则拖到左侧导航栏（去改类）或工具栏时，只要 Y 贴近列表边沿仍会误滚动+高亮最末行。
           const overX = ev.clientX >= r.left && ev.clientX <= r.right;
           if (overX && (nearBottom || nearTop)) {
-            list.scrollTop += nearBottom ? 3 : -3;
+            list.scrollTop += nearBottom ? AUTOSCROLL_STEP_PX : -AUTOSCROLL_STEP_PX;
             const root = ref.current.listRoot;
             const rows = root
               ? (Array.from(root.querySelectorAll("[data-drag-idx]")) as HTMLElement[]).filter(
@@ -201,9 +202,7 @@ export function useListDrag() {
         setDragId(id);
         setDragPos({ x: startX, y: startY });
         rafId = requestAnimationFrame(autoScrollTick);
-        document.body.style.userSelect = "none";
-        document.body.style.cursor = "grabbing";
-        document.body.classList.add("dragging-active");
+        enterDragVisuals();
       };
 
       const move = (ev: PointerEvent) => {
@@ -212,10 +211,7 @@ export function useListDrag() {
         lastEv.y = ev.clientY;
         if (!started) {
           // 长按尚未触发：若移动过大（用户想滚动/选择文字），取消长按
-          if (
-            Math.abs(ev.clientX - startX) > DRAG_THRESHOLD ||
-            Math.abs(ev.clientY - startY) > DRAG_THRESHOLD
-          ) {
+          if (isBeyondThreshold(ev.clientX - startX, ev.clientY - startY)) {
             cleanup();
           }
           return;
@@ -352,9 +348,7 @@ export function useListDrag() {
         setOverIdx(null);
         setOverHalf(null);
         setDragPos(null);
-        document.body.style.userSelect = "";
-        document.body.style.cursor = "";
-        document.body.classList.remove("dragging-active");
+        exitDragVisuals();
       }
 
       timer = window.setTimeout(begin, LONG_PRESS_MS);

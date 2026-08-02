@@ -16,8 +16,6 @@ export interface UseSelectionReturn {
   confirmBatch: boolean;
   setConfirmBatch: (v: boolean) => void;
   toggleSelMode: () => void;
-  enterSelMode: () => void;
-  exitSelMode: () => void;
   toggleSel: (id: number) => void;
   selectAll: () => void;
   selectAllFiltered: (predicate: (item: unknown) => boolean) => void;
@@ -42,16 +40,6 @@ export function useSelection<T>({
       if (v) reset();
       return !v;
     });
-  }, [reset]);
-
-  const enterSelMode = useCallback(() => {
-    setSelMode(true);
-    reset();
-  }, [reset]);
-
-  const exitSelMode = useCallback(() => {
-    setSelMode(false);
-    reset();
   }, [reset]);
 
   const toggleSel = useCallback((id: number) => {
@@ -87,8 +75,6 @@ export function useSelection<T>({
     confirmBatch,
     setConfirmBatch,
     toggleSelMode,
-    enterSelMode,
-    exitSelMode,
     toggleSel,
     selectAll,
     selectAllFiltered,

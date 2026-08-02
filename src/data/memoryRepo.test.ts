@@ -54,3 +54,38 @@ describe("MemoryTransactionRepository 子树级联（0.1.21）", () => {
     expect(active).toEqual([root.id, child.id, grandchild.id].sort((a, b) => a - b));
   });
 });
+
+// 1.0.1 回归：A3 修复——内存回退路径下 update / convertFromInbox 必须返回「全新对象」，
+// 否则 React 因引用相等跳过重渲染，界面表现为「编辑/备注存不进去」。
+describe("MemoryTransactionRepository A3 引用相等修复（1.0.1）", () => {
+  let repo: MemoryTransactionRepository;
+  let t: Transaction;
+
+  beforeEach(async () => {
+    repo = new MemoryTransactionRepository();
+    t = await repo.create({ title: "原事务", note: "旧备注" });
+  });
+
+  it("update 返回新引用，且不污染旧引用", async () => {
+    const before = t;
+    const updated = await repo.update(t.id, { note: "新备注" });
+    expect(updated).not.toBe(before); // 必须返回全新对象
+    expect(before.note).toBe("旧备注"); // 旧引用不应被原地改写
+    expect(updated.note).toBe("新备注");
+    expect(updated.id).toBe(t.id);
+    expect(updated.updated_time).toBeTruthy();
+  });
+
+  it("convertFromInbox 返回新引用，旧引用保持 inbox 状态", async () => {
+    const inbox = await repo.create({ title: "灵感", status: "inbox" });
+    const before = inbox;
+    const converted = await repo.convertFromInbox(inbox.id, {
+      title: "正式事务",
+      category: "next_action",
+    });
+    expect(converted).not.toBe(before); // 必须返回全新对象
+    expect(converted.status).toBe("active");
+    expect(before.status).toBe("inbox"); // 旧引用未被污染
+    expect(converted.id).toBe(inbox.id);
+  });
+});

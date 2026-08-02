@@ -14,7 +14,7 @@
 //   - 布局修复：父事务行右侧工具栏不再挤压子列表，子列表可拉到最右边。
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTxStore } from "../store/useTxStore";
-import type { Transaction, Category } from "../types/transaction";
+import type { Transaction } from "../types/transaction";
 import { byOrder, byPriority, byTime, byCompletion, CAT_MAP } from "../types/transaction";
 import EditModal from "./EditModal";
 import AddChildModal from "./AddChildModal";
@@ -27,11 +27,13 @@ import { useSelection } from "../hooks/useSelection";
 import TxRow, { TxGutter, TxMain } from "./TxRow";
 import DragGhost from "./DragGhost";
 import ListToolbar from "./ListToolbar";
+import { useListActions } from "../hooks/useListActions";
+import { childrenOf as svcChildrenOf, parentDoneRatioOf } from "../services/transactionService";
 
 // 各视图共用的常量（CATEGORIES / CAT_MAP）已收敛到 types/transaction.ts（0.1.20）。
 
 export default function ProjectListView() {
-  const { active, loading, error, loadActive, loadTrash, updateTx, toggleComplete, deleteTx, reorder } =
+  const { active, loading, error, loadActive, updateTx, toggleComplete, deleteTx, reorder } =
     useTxStore();
   const [editing, setEditing] = useState<Transaction | null>(null);
   // 0.1.16：子事务编辑隐藏「类型」——记录当前编辑项是否为子事务
@@ -115,12 +117,8 @@ export default function ProjectListView() {
     await reorder(sorted.map((t) => t.id));
   }
 
-  // 父事务完成度：有子事务→已完成子事务占比(0~1)；无子事务→自身是否完成(0/1)
-  function parentDoneRatio(p: Transaction): number {
-    const kids = childrenOf(p.id);
-    if (kids.length === 0) return p.status === "completed" ? 1 : 0;
-    return kids.filter((k) => k.status === "completed").length / kids.length;
-  }
+  // 父事务完成度：路由到 transactionService.parentDoneRatioOf（单一真相源，C6）。
+  const parentDoneRatio = (p: Transaction) => parentDoneRatioOf(p, active);
 
   // 0.1.13：对某个父事务的子事务单独排序（按优先度 / 时间 / 完成情况），复用 reorder 写回 order_index
   async function sortChildren(pid: number, mode: "priority" | "time" | "completion") {
@@ -136,9 +134,8 @@ export default function ProjectListView() {
     setChildSortFor(null);
   }
 
-  function childrenOf(pid: number): Transaction[] {
-    return active.filter((t) => t.parent_id === pid).sort(byOrder);
-  }
+  // 子事务集合：路由到 transactionService.childrenOf（单一真相源，C6）。
+  const childrenOf = (pid: number) => svcChildrenOf(active, pid);
 
   // 0.1.16：切换某个父事务的子列表展开/收起
   function toggleExpand(id: number) {
@@ -157,63 +154,55 @@ export default function ProjectListView() {
 
   // 0.1.13：一键清理——第一次点击仅选中所有已完成（含子事务）并进入确认态（不打开多选工具栏），
   // 第二次点击才批量删除；确认态下可点右侧「取消」退出。
-  async function cleanCompleted() {
-    if (clearConfirm) {
-      for (const id of selected) await deleteTx(id);
-      await loadTrash();
-      setSelected(new Set());
-      setClearConfirm(false);
-      return;
-    }
-    const ids: number[] = [
-      ...projectsOrdered.filter((p) => p.status === "completed").map((p) => p.id),
-      ...projectsOrdered.flatMap((p) =>
-        childrenOf(p.id).filter((c) => c.status === "completed").map((c) => c.id),
-      ),
-    ];
-    setSelected(new Set(ids));
-    setClearConfirm(true);
-  }
-  function cancelClean() {
-    setClearConfirm(false);
-    setSelected(new Set());
-  }
-  async function batchDelete() {
-    if (!confirmBatch) {
-      setConfirmBatch(true);
-      return;
-    }
-    for (const id of selected) await deleteTx(id);
-    await loadTrash();
-    setSelected(new Set());
-    setConfirmBatch(false);
-    setSelMode(false);
-  }
-  async function moveTo(target: Category) {
-    // 0.1.14：父事务若含子事务则禁止移动（会破坏层级）；子事务与无子父事务可正常移动。
-    // 选中项里若有"含子事务的父事务"，跳过它们并提示，其余（子事务 / 无子父事务）照常移动。
-    const blockedIds = new Set(
-      projectsOrdered
-        .filter((p) => selected.has(p.id) && childrenOf(p.id).length > 0)
-        .map((p) => p.id),
-    );
-    if (blockedIds.size > 0) {
-      setMoveHint("含子事务无法移动");
-      setTimeout(() => setMoveHint(""), 2500);
-    }
-    const movable = [...selected].filter((id) => !blockedIds.has(id));
-    if (movable.length === 0) {
-      return;
-    }
-    for (const id of movable) {
-      await updateTx(id, { category: target, clear_parent: true });
-    }
-    setSelected(new Set());
-    setSelMode(false);
-  }
+  // 工具栏动作（含清理/批量删除/移动）统一收口到 useListActions（0.1.20 B3）；
+  // Project 的差异点（含子事务的 id 来源、含子的父事务移动拦截）以回调注入。
+  const listActions = useListActions({
+    selected,
+    setSelected,
+    clearConfirm,
+    setClearConfirm,
+    confirmBatch,
+    setConfirmBatch,
+    selMode,
+    setSelMode,
+    // 一键清理候选：
+    //  - 任意已完成项（父或子，status==="completed"）均清理；
+    //  - 父事务仍 active 但「所有子都已完成」→ 视为整体已完成，连父带子一起清理；
+    //  - 空父（无子且 active）保留——它可能正等待设立子事项，勿误删。
+    getCompletedIds: () => {
+      const ids: number[] = [];
+      for (const p of projectsOrdered) {
+        const kids = childrenOf(p.id);
+        if (p.status === "completed") {
+          ids.push(p.id); // 已完成父项：直接清
+        } else if (kids.length > 0 && kids.every((c) => c.status === "completed")) {
+          ids.push(p.id); // 父壳待清（子项随后也会入列）
+        }
+        for (const c of kids) if (c.status === "completed") ids.push(c.id);
+      }
+      return ids;
+    },
+    deleteSelected: async (ids) => { for (const id of ids) await deleteTx(id); },
+    // 0.1.14：父事务若含子事务则禁止移动（会破坏层级）；以 filterMovable 拦截。
+    filterMovable: (ids) => {
+      const blocked = new Set(
+        projectsOrdered
+          .filter((p) => ids.includes(p.id) && childrenOf(p.id).length > 0)
+          .map((p) => p.id),
+      );
+      return { movable: ids.filter((id) => !blocked.has(id)), blocked: [...blocked] };
+    },
+    onMoved: (blocked) => {
+      if (blocked.length > 0) {
+        setMoveHint("含子事务无法移动");
+        setTimeout(() => setMoveHint(""), 2500);
+      }
+    },
+  });
+  const { cleanCompleted, cancelClean, batchDelete, moveTo } = listActions;
 
   async function toggleNext(c: Transaction) {
-    const next: 0 | 1 = c.show_in_next === 0 ? 1 : 0;
+    const next = !c.show_in_next;
     await updateTx(c.id, { show_in_next: next });
   }
 
@@ -517,10 +506,10 @@ export default function ProjectListView() {
                                 编辑
                               </button>
                               <button
-                                className={`btn-ghost ${c.show_in_next === 1 ? "on" : ""}`}
+                                className={`btn-ghost ${c.show_in_next ? "on" : ""}`}
                                 onClick={() => toggleNext(c)}
                               >
-                                {c.show_in_next === 1 ? "在 Next ✓" : "加入 Next"}
+                                {c.show_in_next ? "在 Next ✓" : "加入 Next"}
                               </button>
                               {c.status === "completed" && <DeleteButton t={c} />}
                             </>

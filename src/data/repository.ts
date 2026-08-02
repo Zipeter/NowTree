@@ -4,8 +4,6 @@ export interface TransactionQuery {
   status?: Status;
   category?: Category | null;
   parentId?: number | null;
-  // 是否把 show_in_next 的子事务纳入全局 Next
-  includeProjectChildrenInNext?: boolean;
 }
 
 export interface NewTransactionInput {

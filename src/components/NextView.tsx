@@ -5,7 +5,7 @@
 // 工具栏（一键清理 / 排序 / 多选）复用 CategoryListView 的同款逻辑，作用于全部 Next 事务。
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTxStore } from "../store/useTxStore";
-import type { Transaction, TimeSlot, Category } from "../types/transaction";
+import type { Transaction, TimeSlot } from "../types/transaction";
 import {
   byOrder,
   byPriority,
@@ -20,15 +20,20 @@ import Fab from "./Fab";
 import { showToast } from "../toast";
 import { useNoteExpand } from "../hooks/useNoteExpand";
 import { useSelection } from "../hooks/useSelection";
+import { useListActions } from "../hooks/useListActions";
 import TxRow from "./TxRow";
 import DragGhost from "./DragGhost";
 import ListToolbar from "./ListToolbar";
 import {
   LONG_PRESS_MS,
-  DRAG_THRESHOLD,
+  AUTOSCROLL_EDGE_PX,
+  AUTOSCROLL_STEP_PX,
   findScrollableAncestor,
   rowHalfOf,
   nearestRowEl,
+  enterDragVisuals,
+  exitDragVisuals,
+  isBeyondThreshold,
 } from "../hooks/dragUtils";
 
 const SLOTS: TimeSlot[] = ["morning", "noon", "evening"];
@@ -43,8 +48,7 @@ export default function NextView({
   openSlot: TimeSlot | null;
   setOpenSlot: (s: TimeSlot | null) => void;
 }) {
-  const { active, loadActive, updateTx, toggleComplete, deleteTx, reorder, loadTrash } =
-    useTxStore();
+  const { active, loadActive, updateTx, toggleComplete, deleteTx, reorder } = useTxStore();
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [adding, setAdding] = useState(false);
   const { expandedNoteId, setExpandedNoteId, containerRef } = useNoteExpand();
@@ -86,7 +90,7 @@ export default function NextView({
       active.filter(
         (t) =>
           ((t.category === "next_action" && t.parent_id === null) ||
-            t.show_in_next === 1),
+            t.show_in_next),
       ),
     [active],
   );
@@ -122,12 +126,26 @@ export default function NextView({
     return m;
   }, [items]);
 
-  // ===== 工具栏动作 =====
+  // ===== 工具栏动作（统一收口到 useListActions，0.1.20 B3）=====
+  const listActions = useListActions({
+    selected,
+    setSelected,
+    clearConfirm,
+    setClearConfirm,
+    confirmBatch,
+    setConfirmBatch,
+    selMode,
+    setSelMode,
+    getCompletedIds: () =>
+      ordered.filter((t) => t.status === "completed").map((t) => t.id),
+    deleteSelected: async (ids) => { for (const id of ids) await deleteTx(id); },
+  });
+  const { cleanCompleted, cancelClean, batchDelete, moveTo } = listActions;
   function applySort(mode: "priority" | "time" | "completion") {
     const sorted = [...items].sort(
       mode === "priority" ? byPriority : mode === "completion" ? byCompletion : byTime,
     );
-    reorder(sorted.map((t) => t.id));
+    listActions.applySort(sorted.map((t) => t.id));
   }
   // 全选：仅选中「未分配时段」(left) 的事务（用户要求：工具栏全选只选未分配）
   function selectAll() {
@@ -144,40 +162,6 @@ export default function NextView({
   function toggleSelModeLocal() {
     toggleSelMode();
     setClearConfirm(false);
-  }
-  async function cleanCompleted() {
-    if (clearConfirm) {
-      for (const id of selected) await deleteTx(id);
-      await loadTrash();
-      setSelected(new Set());
-      setClearConfirm(false);
-      return;
-    }
-    const ids = ordered.filter((t) => t.status === "completed").map((t) => t.id);
-    setSelected(new Set(ids));
-    setClearConfirm(true);
-  }
-  function cancelClean() {
-    setClearConfirm(false);
-    setSelected(new Set());
-  }
-  async function batchDelete() {
-    if (!confirmBatch) {
-      setConfirmBatch(true);
-      return;
-    }
-    for (const id of selected) await deleteTx(id);
-    await loadTrash();
-    setSelected(new Set());
-    setConfirmBatch(false);
-    setSelMode(false);
-  }
-  async function moveTo(target: Category) {
-    for (const id of selected) {
-      await updateTx(id, { category: target, clear_parent: true });
-    }
-    setSelected(new Set());
-    setSelMode(false);
   }
 
   // ===== 拖拽：长按后在同栏内拖动排序；或拖到其它时段/左栏改分配 =====
@@ -201,10 +185,7 @@ export default function NextView({
         showToast("已完成事务无法拖拽");
       }, LONG_PRESS_MS);
       const pMove = (ev: PointerEvent) => {
-        if (
-          Math.abs(ev.clientX - startX) > DRAG_THRESHOLD ||
-          Math.abs(ev.clientY - startY) > DRAG_THRESHOLD
-        ) {
+        if (isBeyondThreshold(ev.clientX - startX, ev.clientY - startY)) {
           if (pt != null) {
             clearTimeout(pt);
             pt = null;
@@ -238,8 +219,8 @@ export default function NextView({
       const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
       const slot = el?.closest("[data-slot]") as HTMLElement | null;
       if (slot) return slot.dataset.slot as TimeSlot;
-      const left = el?.closest("[data-left-list]") as HTMLElement | null;
-      if (left) return "left";
+      const leftListEl = el?.closest("[data-left-list]") as HTMLElement | null;
+      if (leftListEl) return "left";
       return null;
     };
     // 命中的行 id + 光标在该行的上/下半（同栏/跨栏排序的插入方向：top=插上、bottom=插下）
@@ -247,12 +228,12 @@ export default function NextView({
     const rowHalf = (
       ev: PointerEvent,
       targetList: HTMLElement | null,
-    ): { id: number | null; half: "top" | "bottom" } => {
+    ): { rowId: number | null; half: "top" | "bottom" } => {
       const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
       // 0.1.19：悬停在工具栏 / 下拉菜单 / 左侧导航栏时，不当作列表行落点
       //   （拖动中本就不能点它们；避免这些区域仍高亮最近行）。
       if (el?.closest(".list-toolbar, .dropdown-menu, .side-menu")) {
-        return { id: null, half: "top" };
+        return { rowId: null, half: "top" };
       }
       let li = el?.closest("[data-drag-idx]") as HTMLElement | null;
       if (!li) {
@@ -263,10 +244,10 @@ export default function NextView({
         const root = targetList ?? listRoot ?? findScrollableAncestor(el) ?? el?.closest(".tx-list");
         li = nearestRowEl(root, ev.clientY, null, id);
       }
-      if (!li) return { id: null, half: "top" };
+      if (!li) return { rowId: null, half: "top" };
       const r = li.getBoundingClientRect();
       const half = rowHalfOf(r.top, r.height, ev.clientY);
-      return { id: Number(li.dataset.dragIdx), half };
+      return { rowId: Number(li.dataset.dragIdx), half };
     };
     // 自动滚动（auto-scroll）：拖到列表上下边缘时，让实际可滚动祖先自己滚，
     // 并实时把落点行标到当前列表根（listRoot）露出来的最前/最后一行，松手即可排到两端。
@@ -287,14 +268,14 @@ export default function NextView({
       const list = tList ? (findScrollableAncestor(tList) ?? tList) : scroller;
         if (list) {
           const r = list.getBoundingClientRect();
-          const m = 52; // 边缘触发区高度
+          const m = AUTOSCROLL_EDGE_PX; // 边缘触发区高度
           const nearBottom = ev.clientY > r.bottom - m;
           const nearTop = ev.clientY < r.top + m;
           // 0.1.19：光标须「横向」也落在滚动容器内，才滚动/标边行。
           //   拖到左侧导航栏（去改类）时，Y 贴近列表边沿不应误触发滚动/高亮最末行。
           const overX = ev.clientX >= r.left && ev.clientX <= r.right;
           if (overX && (nearBottom || nearTop)) {
-          list.scrollTop += nearBottom ? 3 : -3;
+          list.scrollTop += nearBottom ? AUTOSCROLL_STEP_PX : -AUTOSCROLL_STEP_PX;
           const rows = tList
             ? (Array.from(tList.querySelectorAll("[data-drag-idx]")) as HTMLElement[]).filter(
                 (x) => Number(x.dataset.dragIdx) !== id,
@@ -325,9 +306,7 @@ export default function NextView({
       setDragId(id);
       setDragPos({ x: lastMove.x, y: lastMove.y });
       rafId = requestAnimationFrame(autoScrollTick);
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "grabbing";
-      document.body.classList.add("dragging-active");
+      enterDragVisuals();
     };
     const move = (ev: PointerEvent) => {
       lastMove.ev = ev;
@@ -335,8 +314,7 @@ export default function NextView({
       lastMove.y = ev.clientY;
       if (!started) {
         // 长按期间若移动超过阈值，视为滑动/滚动，取消拖拽
-        if (Math.abs(ev.clientX - startX) > DRAG_THRESHOLD ||
-            Math.abs(ev.clientY - startY) > DRAG_THRESHOLD) {
+        if (isBeyondThreshold(ev.clientX - startX, ev.clientY - startY)) {
           cleanup();
         }
         return;
@@ -408,10 +386,10 @@ export default function NextView({
         } else {
           targetList = document.querySelector(`[data-slot="${h}"] .tx-list`) as HTMLElement | null;
         }
-        const { id, half } = rowHalf(ev, targetList);
-        overIdxRef.current = id;
+        const { rowId, half } = rowHalf(ev, targetList);
+        overIdxRef.current = rowId;
         overHalfRef.current = half;
-        setOverIdx(id);
+        setOverIdx(rowId);
         setOverHalf(half);
       } else {
         overIdxRef.current = null;
@@ -441,7 +419,7 @@ export default function NextView({
             ) {
               const c = CAT_MAP[cat];
               // 离开 Next 上下文：清 parent_id、重置 time_slot、并确保 show_in_next=0（防止外来项残留 Next）
-              if (c) updateTx(did, { category: c, clear_parent: true, time_slot: "none", show_in_next: 0 });
+              if (c) updateTx(did, { category: c, clear_parent: true, time_slot: "none", show_in_next: false });
             }
           }
         } else {
@@ -457,7 +435,7 @@ export default function NextView({
                 ? (document.querySelector("[data-left-list] .tx-list") as HTMLElement | null)
                 : (document.querySelector(`[data-slot="${h}"] .tx-list`) as HTMLElement | null);
               const rh = rowHalf(ev, tList);
-              let hitId = rh.id ?? overIdxRef.current;
+              let hitId = rh.rowId ?? overIdxRef.current;
               let half: "top" | "bottom" = rh.half;
               if (hitId == null && overHalfRef.current) half = overHalfRef.current;
               if (hitId != null) {
@@ -485,7 +463,7 @@ export default function NextView({
               ? (document.querySelector("[data-left-list] .tx-list") as HTMLElement | null)
               : (document.querySelector(`[data-slot="${srcSlot}"] .tx-list`) as HTMLElement | null);
             const rh = rowHalf(ev, tList);
-            let oId = rh.id;
+            let oId = rh.rowId;
             let half = rh.half;
             if (oId == null) { oId = overIdxRef.current; half = overHalfRef.current ?? "top"; }
             const listIds = listIdsOf(srcSlot);
@@ -538,9 +516,7 @@ export default function NextView({
       setOverIdx(null);
       setOverHalf(null);
       setDragPos(null);
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-      document.body.classList.remove("dragging-active");
+      exitDragVisuals();
     };
 
     timer = window.setTimeout(begin, LONG_PRESS_MS);

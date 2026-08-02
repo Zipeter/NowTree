@@ -38,6 +38,7 @@ import { useListDrag } from "../hooks/useListDrag";
 import { showToast } from "../toast";
 import { useNoteExpand } from "../hooks/useNoteExpand";
 import { useSelection } from "../hooks/useSelection";
+import { useListActions } from "../hooks/useListActions";
 import { buildCategoryPatch, canShowInNext } from "../services/transactionService";
 import ListToolbar from "./ListToolbar";
 
@@ -55,7 +56,6 @@ export default function GenericListView({ mode }: GenericListViewProps) {
     error,
     loadInbox,
     loadActive,
-    loadTrash,
     removeInbox,
     updateTx,
     toggleComplete,
@@ -84,7 +84,7 @@ export default function GenericListView({ mode }: GenericListViewProps) {
       return active.filter(
         (t) =>
           (t.category === "next_action" && t.parent_id === null) ||
-          t.show_in_next === 1,
+          t.show_in_next,
       );
     }
     return active.filter((t) => t.category === mode && t.parent_id === null);
@@ -132,50 +132,30 @@ export default function GenericListView({ mode }: GenericListViewProps) {
   }, []);
 
 
-  // ===== 工具栏动作 =====
+  // ===== 工具栏动作（统一收口到 useListActions，0.1.20 B3）=====
+  const listActions = useListActions({
+    selected,
+    setSelected,
+    clearConfirm,
+    setClearConfirm,
+    confirmBatch,
+    setConfirmBatch,
+    selMode,
+    setSelMode,
+    // 选中「已完成」的 id（类别模式：ordered 中已完成的）
+    getCompletedIds: () =>
+      ordered.filter((t) => t.status === "completed").map((t) => t.id),
+    // 删除方式：inbox 走 removeInbox，类别走 deleteTx
+    deleteSelected: inboxMode
+      ? async (ids) => { for (const id of ids) await removeInbox(id); }
+      : async (ids) => { for (const id of ids) await deleteTx(id); },
+  });
+  const { cleanCompleted, cancelClean, batchDelete, moveTo } = listActions;
   function applySort(m: "priority" | "time" | "completion") {
     const sorted = [...items].sort(
       m === "priority" ? byPriority : m === "completion" ? byCompletion : byTime,
     );
-    reorder(sorted.map((t) => t.id));
-  }
-  // 一键清理（类别模式）：第一次点击仅选中所有已完成并进入确认态，第二次才批量删除
-  async function cleanCompleted() {
-    if (clearConfirm) {
-      for (const id of selected) await deleteTx(id);
-      await loadTrash();
-      setSelected(new Set());
-      setClearConfirm(false);
-      return;
-    }
-    const ids = ordered.filter((t) => t.status === "completed").map((t) => t.id);
-    setSelected(new Set(ids));
-    setClearConfirm(true);
-  }
-  function cancelClean() {
-    setClearConfirm(false);
-    setSelected(new Set());
-  }
-  async function batchDelete() {
-    if (!confirmBatch) {
-      setConfirmBatch(true);
-      return;
-    }
-    for (const id of selected) {
-      if (inboxMode) await removeInbox(id);
-      else await deleteTx(id);
-    }
-    await loadTrash();
-    setSelected(new Set());
-    setConfirmBatch(false);
-    setSelMode(false);
-  }
-  async function moveTo(target: Category) {
-    for (const id of selected) {
-      await updateTx(id, { category: target, clear_parent: true });
-    }
-    setSelected(new Set());
-    setSelMode(false);
+    listActions.applySort(sorted.map((t) => t.id));
   }
 
   // Inbox 批量转换队列（0.1.13）
@@ -199,13 +179,13 @@ export default function GenericListView({ mode }: GenericListViewProps) {
     setBatchIdx(0);
   }
 
-  // 0.1.17：跨类别拖拽落点——拖到左侧导航栏改类别。
+  // 0.1.17：跨类别拖拽落点——拖到左侧导航栏改类别（在此命名为 changeCategoryOnDrop 以表意）。
   // 规则：inbox 禁止互转（拖到 Inbox 导航不高亮、无操作）；拖到自己所在类别的导航 = 无操作；
   //       原生 next_action 项离开 Next：清 parent_id / time_slot / show_in_next；
   //       someday / waiting 项改类别：仅改 category，**保持 show_in_next 与 time_slot（不影响 Next 展示状态）**。
   // 类别迁移规则收口到 service（见 buildCategoryPatch）：inbox 互转 / 拖到自己类别
   // 由上面早返回拦截；这里只负责「原生 next_action 离开 Next 清父子关系」等补丁。
-  function catTarget(id: number, cat: string) {
+  function changeCategoryOnDrop(id: number, cat: string) {
     if (cat === "inbox" || cat === mode) return;
     const tx = active.find((t) => t.id === id);
     if (!tx) return;
@@ -313,7 +293,7 @@ export default function GenericListView({ mode }: GenericListViewProps) {
                   ? undefined
                   : {
                       allowCrossCat: true,
-                      onCatTarget: catTarget,
+                      onCatTarget: changeCategoryOnDrop,
                       disabled: t.status === "completed",
                       onDisabledPress: () => showToast("已完成事务无法拖拽"),
                     };
@@ -352,10 +332,10 @@ export default function GenericListView({ mode }: GenericListViewProps) {
                   )}
                   {!inboxMode && canShowInNext(mode) && (
                     <button
-                      className={`btn-ghost ${t.show_in_next === 1 ? "on" : ""}`}
-                      onClick={() => { setDeletingId(null); updateTx(t.id, { show_in_next: t.show_in_next === 1 ? 0 : 1 }); }}
+                      className={`btn-ghost ${t.show_in_next ? "on" : ""}`}
+                      onClick={() => { setDeletingId(null); updateTx(t.id, { show_in_next: !t.show_in_next }); }}
                     >
-                      {t.show_in_next === 1 ? "在 Next ✓" : "加入 Next"}
+                      {t.show_in_next ? "在 Next ✓" : "加入 Next"}
                     </button>
                   )}
                   <button className="btn-ghost" onClick={() => { setDeletingId(null); setEditing(t); }}>

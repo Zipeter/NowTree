@@ -16,8 +16,8 @@ function mk(p: Partial<Transaction>): Transaction {
     completed_time: null,
     updated_time: null,
     parent_id: null,
-    show_in_next: 0,
-    deleted: 0,
+    show_in_next: false,
+    deleted: false,
     order_index: null,
     reminder_time: null,
     reminder_done: 0,
@@ -30,17 +30,17 @@ function mk(p: Partial<Transaction>): Transaction {
 
 describe("buildCategoryPatch", () => {
   it("next_action 离开 Next：清 parent_id / time_slot / show_in_next", () => {
-    const tx = mk({ category: "next_action", parent_id: 5, time_slot: "morning", show_in_next: 1 });
+    const tx = mk({ category: "next_action", parent_id: 5, time_slot: "morning", show_in_next: true });
     const patch = buildCategoryPatch(tx, "waiting");
     expect(patch).toEqual({
       category: "waiting",
       clear_parent: true,
       time_slot: "none",
-      show_in_next: 0,
+      show_in_next: false,
     });
   });
   it("waiting/someday 改类别：仅改 category，保留 show_in_next", () => {
-    const tx = mk({ category: "someday", show_in_next: 1 });
+    const tx = mk({ category: "someday", show_in_next: true });
     const patch = buildCategoryPatch(tx, "waiting");
     expect(patch).toEqual({ category: "waiting" });
   });

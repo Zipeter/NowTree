@@ -25,11 +25,5 @@ export function useToast() {
     }, delay);
   }
 
-  function dismissToast() {
-    if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    setToast(null);
-    setToastAction(null);
-  }
-
-  return { toast, toastAction, showToast, dismissToast };
+  return { toast, toastAction, showToast };
 }

@@ -9,8 +9,8 @@ REM Output: src-tauri\target\release\bundle\  (the .msi / .exe installer)
 set "MSVC_BIN=H:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.51.36231\bin\Hostx64\x64"
 set "CARGO_BIN=C:\Users\zJJ\.cargo\bin"
 
-set "SDK_INC=D:\Windows Kits\10\Include\10.0.26100.0"
-set "SDK_LIB=D:\Windows Kits\10\Lib\10.0.26100.0"
+set "SDK_INC=D:\Windows Kits\10\Include\10.0.28000.0"
+set "SDK_LIB=D:\Windows Kits\10\Lib\10.0.28000.0"
 set "MSVC_INC=H:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.51.36231\include"
 set "MSVC_LIB=H:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.51.36231\lib\x64"
 

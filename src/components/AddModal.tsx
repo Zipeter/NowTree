@@ -5,7 +5,7 @@
 import Modal from "./common/Modal";
 import TransactionForm, { type TxFormValues } from "./TransactionForm";
 import { useTxStore } from "../store/useTxStore";
-import { normalizeDeadline, type Category } from "../types/transaction";
+import { normalizeDeadline, resolveDeadline, type Category } from "../types/transaction";
 
 type AddCategory = Category | "inbox";
 
@@ -28,11 +28,12 @@ export default function AddModal({
   const isInbox = category === "inbox";
 
   function handleCreate(v: TxFormValues) {
-    // 0.1.16：日期检测——具体日期若是今天，自动归一成「今日」。
-    const dl = normalizeDeadline(
+    // 0.1.16 + 1.0.2：日期检测 + 相对类型把锚点日期写入 deadline_date
+    const norm = normalizeDeadline(
       isInbox ? "none" : v.deadlineType,
       isInbox ? null : v.deadlineType === "date" ? (v.deadlineDate || null) : null,
     );
+    const dl = resolveDeadline(norm.type, norm.date);
     createTx({
       title: v.title,
       note: v.note || undefined,

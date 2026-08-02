@@ -5,11 +5,14 @@
 import { useEffect } from "react";
 import { onToast } from "../toast";
 
+// 提醒扫描周期（毫秒）：每 30 秒检查一次到期且未弹过的提醒。
+export const REMINDER_SCAN_MS = 30000;
+
 export function useReminderScan(checkReminders: () => void) {
   useEffect(() => {
     const timer = setInterval(() => {
       checkReminders();
-    }, 30000);
+    }, REMINDER_SCAN_MS);
     return () => clearInterval(timer);
   }, [checkReminders]);
 }

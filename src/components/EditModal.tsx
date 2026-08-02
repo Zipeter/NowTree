@@ -6,7 +6,7 @@ import { useState } from "react";
 import Modal from "./common/Modal";
 import TransactionForm, { type TxFormValues } from "./TransactionForm";
 import { useTxStore } from "../store/useTxStore";
-import { normalizeDeadline, type Transaction } from "../types/transaction";
+import { normalizeDeadline, resolveDeadline, type Transaction } from "../types/transaction";
 
 interface EditModalProps {
   tx: Transaction;
@@ -35,11 +35,12 @@ export default function EditModal({ tx, onClose, inbox, onDelete, hideCategory }
       // Inbox 灵感编辑：仅改标题与备注，保持 status=inbox、category=null
       updateTx(tx.id, { title: t, ...notePatch });
     } else {
-      // 0.1.16：日期检测——具体日期若是今天，自动归一成「今日」并清空日期。
-      const dl = normalizeDeadline(
+      // 0.1.16 + 1.0.2：日期检测 + 相对类型把锚点日期写入 deadline_date
+      const norm = normalizeDeadline(
         v.deadlineType,
         v.deadlineType === "date" ? (v.deadlineDate || null) : null,
       );
+      const dl = resolveDeadline(norm.type, norm.date);
       updateTx(tx.id, {
         title: t,
         ...notePatch,

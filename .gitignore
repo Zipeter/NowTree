@@ -56,9 +56,6 @@ cargo-debug.log*
 .DS_Store
 Thumbs.db
 
-# ---------- 项目私有记忆（保持本地，不上传 GitHub） ----------
-.workbuddy/
-
 # ---------- 临时 / 本地工具 / 个人笔记 ----------
 temp/
 

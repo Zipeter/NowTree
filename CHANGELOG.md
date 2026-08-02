@@ -4,6 +4,37 @@
 
 ---
 
+## 1.0.1（2026-08-02）
+
+本版本聚焦"正确性修复 + 相对截止日逻辑回归 + 代码整理"，版本号保持 1.0.1。
+
+### 正确性修复（5 项）
+- **写操作不再静默失败（A1）**：`useTxStore` 的 `addInbox` / `removeInbox` / `convertInbox` / `addChild` / `createTx` 统一包 `try/catch` → `set({error})`，写入失败会在 UI 暴露而非吞掉。
+- **提醒不再死循环重弹（A2）**：`checkReminders` 改为"先置 `reminder_done=1` 再发通知"，避免同一条到期提醒反复弹窗。
+- **内存回退模式也能刷新（A3）**：`memoryRepo.update` / `convertFromInbox` 返回全新对象而非原地改同引用，浏览器（非 Tauri）回退模式列表也能正确重渲染。
+- **拖拽排序不再只写一半索引（A4）**：`reorder` 由 `Promise.all` 改为顺序 `await` + `try/catch`，批量拖动后索引完整一致。
+- **数据路径不再硬编码（C11）**：`App.tsx` 用 Tauri `appDataDir()` + `join()` 在运行时算真实 SQLite 路径，替换 `C:\Users\你\...` 占位符；非 Tauri 环境给出明确回退提示。
+
+### 相对截止日锚定（修复"今日却默认逾期"）
+把「今日 / 本周 / 本月」与「具体日期」统一抽象为"都解出一个确定的截止日（deadline_date）"：
+- `today` → 当天日期；`week` → 那周周日；`month` → 那月最后一天；`date` → 所选日期。
+- **锚点 = 你"修改时间要求那一刻"的日期**：重新选一次即刷新锚点，按"你承诺的那一周/那月"算逾期，符合直觉。旧任务（`deadline_date` 为空）仍按创建时刻算，零回归。
+- 修复此前"昨日创建、今天设今日却直接标红逾期"的困惑；新增 5 个锚点行为单元测试（`vitest` 共 42 passed）。
+
+### 代码整理（不改变功能）
+- **B2+E 统一拖拽引擎**：把 NextView 与列表拖拽重复的"拖拽视觉接管（光标/禁选）+ 阈值判定"抽到 `dragUtils` 共享（`enterDragVisuals` / `exitDragVisuals` / `isBeyondThreshold`）；落点业务编排与 NextView 的三个时间槽表等独有逻辑一行未动，规避拖拽回归。
+- **C9 拆分 App.tsx 上帝组件**：新建 `useShell` hook，把窗口关闭拦截、开机自启、勾选音、导入导出、重置确认、快捷键监听等外壳副作用整体收口，App.tsx 由 ~533 行瘦到 ~290 行；grep 确认 App 内已无直接 `invoke(` 调用。
+
+### 工程
+- 版本号四处（package.json / tauri.conf.json / Cargo.toml / App.tsx）保持 `1.0.1`。
+- 测试：`tsc --noEmit` 0 错；`vitest run` 42 passed（原 37 + 新增 5 个截止日锚点用例）。
+
+### 已知限制（与 1.0.0 一致）
+- 提醒依赖 NowTree 正在运行（托盘态进程存活仍会提醒；彻底退出后不提醒）。
+- 安装包产物：`build-release.bat` 同时输出可直接双击的 `NowTree.exe`、WiX `.msi`（`NowTree_1.0.1_x64_en-US.msi`）与 NSIS `setup.exe`（`NowTree_1.0.1_x64-setup.exe`）。
+
+---
+
 ## 1.0.0（2026-07-25）
 
 首个稳定版。在 0.2.0 打磨基础上，针对回归清单修复若干体验问题，并准备发布。

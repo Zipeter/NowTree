@@ -2,10 +2,11 @@
 // 第一、二步覆盖 Inbox；第三、四步覆盖 Inbox 录入与转换；第五、六步扩展四类视图与 Project 树。
 import { create } from "zustand";
 import { transactionRepo } from "../data";
-import type { Transaction, DeadlineType, Status, Category } from "../types/transaction";
-import { normalizeDeadline } from "../types/transaction";
+import type { Transaction, Status, Category, TxFields } from "../types/transaction";
+import { normalizeDeadline, resolveDeadline } from "../types/transaction";
 import type { ConvertInput } from "../data/repository";
-import { sendNotification } from "@tauri-apps/plugin-notification";
+import { collectSubtreeIds } from "../services/transactionService";
+import { notify } from "../services/notification";
 
 // 生成当前 ISO 时间；用于完成时间等字段
 const nowISO = () => new Date().toISOString();
@@ -13,14 +14,8 @@ const nowISO = () => new Date().toISOString();
 // 0.1.20：新建事务的「缺省填充」助手——把三处 create 里重复的
 // note/priority/deadline_type/deadline_date/reminder_time 默认值规则收敛到一处。
 // 调用方用 ...applyTxDefaults({...}) 展开，再补上 status/category/parent_id 等差异字段。
-interface TxDraft {
-  title: string;
-  note?: string | null;
-  priority?: number | null;
-  deadline_type?: DeadlineType;
-  deadline_date?: string | null;
-  reminder_time?: string | null;
-}
+// 新建事务的「缺省填充」输入类型（C3：复用 transaction.ts 的 TxFields，避免 6 字段 Data Clumps）。
+type TxDraft = TxFields;
 function applyTxDefaults(d: TxDraft) {
   return {
     title: d.title,
@@ -46,17 +41,10 @@ interface TxStore {
   addInbox: (title: string, note?: string) => Promise<void>;
   removeInbox: (id: number) => Promise<void>;
   convertInbox: (id: number, input: ConvertInput) => Promise<void>;
-  // 第六步：在某个项目下新增子事务（可带完整字段）。
+  // 第六步：在某个项目下新增子事务（可带完整字段）。字段形状复用 TxFields（C3）。
   addChild: (
     parentId: number,
-    input: {
-      title: string;
-      note?: string;
-      priority?: number;
-      deadline_type?: DeadlineType;
-      deadline_date?: string;
-      reminder_time?: string;
-    },
+    input: TxFields,
   ) => Promise<void>;
   // 通用就地更新（切换 show_in_next、编辑、设提醒等复用）
   updateTx: (id: number, patch: Partial<Transaction> & { clear_parent?: boolean; clear_reminder?: boolean; clear_note?: boolean }) => Promise<void>;
@@ -64,17 +52,11 @@ interface TxStore {
   toggleComplete: (id: number) => Promise<void>;
   // 第七步：软删除（移出 active）
   deleteTx: (id: number) => Promise<void>;
-  // 0.1.6：悬浮加号按钮——在当前界面直接新增对应类别的事务（跳过 Inbox 收集）
-  createTx: (input: {
-    title: string;
-    note?: string;
-    category: Category | null;
-    status?: Status;
-    priority?: number;
-    deadline_type?: DeadlineType;
-    deadline_date?: string | null;
-    reminder_time?: string | null;
-  }) => Promise<void>;
+  // 0.1.6：悬浮加号按钮——在当前界面直接新增对应类别的事务（跳过 Inbox 收集）。
+  // 业务字段复用 TxFields，仅补上 category/status（C3：统一类型，避免重复字段块）。
+  createTx: (
+    input: TxFields & { category: Category | null; status?: Status },
+  ) => Promise<void>;
   // 0.1.7：手动拖拽排序。传入某视图内当前顺序的 id 列表，按位置写回 order_index。
   reorder: (ids: number[]) => Promise<void>;
   // 回收站：加载 / 恢复 / 彻底删除 / 清空
@@ -116,49 +98,67 @@ export const useTxStore = create<TxStore>((set, get) => ({
     }
   },
 
+  // A1 修复：写操作统一包裹 try/catch，失败时在 store 暴露 error，
+  // 避免 invoke 静默失败导致「界面没反应却不知道出错」。
   addInbox: async (title, note) => {
-    const created = await transactionRepo.create({
-      ...applyTxDefaults({ title, note }),
-      status: "inbox",
-    });
-    set({ inbox: [created, ...get().inbox] });
+    try {
+      const created = await transactionRepo.create({
+        ...applyTxDefaults({ title, note }),
+        status: "inbox",
+      });
+      set({ inbox: [created, ...get().inbox] });
+    } catch (e) {
+      set({ error: (e as Error).message });
+    }
   },
 
   removeInbox: async (id) => {
-    await transactionRepo.softDelete(id);
-    set({ inbox: get().inbox.filter((t) => t.id !== id) });
+    try {
+      await transactionRepo.softDelete(id);
+      set({ inbox: get().inbox.filter((t) => t.id !== id) });
+    } catch (e) {
+      set({ error: (e as Error).message });
+    }
   },
 
   // 整理转换：调用 Repository 原地改写该 Inbox 记录；成功后它不再是 inbox，
   // 从 inbox 列表移除，并替换/追加到 active 数组中（避免 loadActive 已加载全部时产生重复）。
   convertInbox: async (id, input) => {
-    const converted = await transactionRepo.convertFromInbox(id, input);
-    const existing = get().active.some((t) => t.id === id);
-    set({
-      inbox: get().inbox.filter((t) => t.id !== id),
-      active: existing
-        ? get().active.map((t) => (t.id === id ? converted : t))
-        : [converted, ...get().active],
-    });
+    try {
+      const converted = await transactionRepo.convertFromInbox(id, input);
+      const existing = get().active.some((t) => t.id === id);
+      set({
+        inbox: get().inbox.filter((t) => t.id !== id),
+        active: existing
+          ? get().active.map((t) => (t.id === id ? converted : t))
+          : [converted, ...get().active],
+      });
+    } catch (e) {
+      set({ error: (e as Error).message });
+    }
   },
 
   // 第六步：在某个项目下新增子事务。默认 category=next_action、status=active、parent_id=项目 id；
   // 默认 show_in_next=0（仅在该项目内显示），由用户手动「加入 Next」。
   addChild: async (parentId, input) => {
-    const created = await transactionRepo.create({
-      ...applyTxDefaults({
-        title: input.title,
-        note: input.note,
-        priority: input.priority,
-        deadline_type: input.deadline_type,
-        deadline_date: input.deadline_date,
-        reminder_time: input.reminder_time,
-      }),
-      category: "next_action",
-      status: "active",
-      parent_id: parentId,
-    });
-    set({ active: [created, ...get().active] });
+    try {
+      const created = await transactionRepo.create({
+        ...applyTxDefaults({
+          title: input.title,
+          note: input.note,
+          priority: input.priority,
+          deadline_type: input.deadline_type,
+          deadline_date: input.deadline_date,
+          reminder_time: input.reminder_time,
+        }),
+        category: "next_action",
+        status: "active",
+        parent_id: parentId,
+      });
+      set({ active: [created, ...get().active] });
+    } catch (e) {
+      set({ error: (e as Error).message });
+    }
   },
 
   // 就地更新某条事务（调用 Repository.update 并同步到 active 数组）。
@@ -187,61 +187,64 @@ export const useTxStore = create<TxStore>((set, get) => ({
   },
 
   // 第七步：软删除（deleted=1，数据仍在库，未来可恢复）。
-  // 连同整棵子树（任意层级）一并从 active 移除，避免孤儿残留于内存列表。
+  // 后端（Tauri）或内存库已级联删除整棵子树；这里只从本地缓存移除该根及其后代。
+  // B5：子树收集逻辑收口到 transactionService.collectSubtreeIds，store 不再重写遍历算法。
   deleteTx: async (id) => {
-    await transactionRepo.softDelete(id);
-    const active = get().active;
-    const remove = new Set<number>([id]);
-    const stack = [id];
-    while (stack.length) {
-      const cur = stack.pop()!;
-      for (const t of active) {
-        if (t.parent_id === cur) {
-          remove.add(t.id);
-          stack.push(t.id);
-        }
-      }
+    try {
+      await transactionRepo.softDelete(id);
+      const active = get().active;
+      const remove = new Set<number>([id, ...collectSubtreeIds(active, id)]);
+      set({ active: active.filter((t) => !remove.has(t.id)) });
+    } catch (e) {
+      set({ error: (e as Error).message });
     }
-    set({ active: active.filter((t) => !remove.has(t.id)) });
   },
 
   // 0.1.6：悬浮加号直接创建。inbox 写入 inbox 列表，其余写入 active。
   createTx: async (input) => {
-    const created = await transactionRepo.create({
-      ...applyTxDefaults({
-        title: input.title,
-        note: input.note,
-        priority: input.priority,
-        deadline_type: input.deadline_type,
-        deadline_date: input.deadline_date,
-        reminder_time: input.reminder_time,
-      }),
-      category: input.category,
-      status: input.status ?? "active",
-    });
-    if (input.status === "inbox") {
-      set({ inbox: [created, ...get().inbox] });
-    } else {
-      set({ active: [created, ...get().active] });
+    try {
+      const created = await transactionRepo.create({
+        ...applyTxDefaults({
+          title: input.title,
+          note: input.note,
+          priority: input.priority,
+          deadline_type: input.deadline_type,
+          deadline_date: input.deadline_date,
+          reminder_time: input.reminder_time,
+        }),
+        category: input.category,
+        status: input.status ?? "active",
+      });
+      if (input.status === "inbox") {
+        set({ inbox: [created, ...get().inbox] });
+      } else {
+        set({ active: [created, ...get().active] });
+      }
+    } catch (e) {
+      set({ error: (e as Error).message });
     }
   },
 
-  // 0.1.7：手动拖拽排序。按顺序写回 order_index（0..n），并同步内存数组。
+  // 0.1.7：手动拖拽排序。A4 修复：改用顺序 await 而非 Promise.all，
+  // 避免并发写中途某条失败导致 order_index「半套」索引（前 N 条已落库、后续未写）。
   reorder: async (ids) => {
-    const jobs = ids.map((id, idx) =>
-      transactionRepo.update(id, { order_index: idx }),
-    );
-    await Promise.all(jobs);
-    const map = new Map<number, number>();
-    ids.forEach((id, idx) => map.set(id, idx));
-    set({
-      active: get().active.map((t) =>
-        map.has(t.id) ? { ...t, order_index: map.get(t.id)! } : t,
-      ),
-      inbox: get().inbox.map((t) =>
-        map.has(t.id) ? { ...t, order_index: map.get(t.id)! } : t,
-      ),
-    });
+    try {
+      const map = new Map<number, number>();
+      for (let idx = 0; idx < ids.length; idx++) {
+        await transactionRepo.update(ids[idx], { order_index: idx });
+        map.set(ids[idx], idx);
+      }
+      set((s) => ({
+        active: s.active.map((t) =>
+          map.has(t.id) ? { ...t, order_index: map.get(t.id)! } : t,
+        ),
+        inbox: s.inbox.map((t) =>
+          map.has(t.id) ? { ...t, order_index: map.get(t.id)! } : t,
+        ),
+      }));
+    } catch (e) {
+      set({ error: (e as Error).message });
+    }
   },
 
   // 回收站：拉取已软删除（deleted=1）的事务
@@ -259,22 +262,16 @@ export const useTxStore = create<TxStore>((set, get) => ({
   },
 
   // 彻底删除：从库物理移除（释放磁盘空间，不可恢复）。
-  // 连同整棵子树从 trash 列表移除（与数据层 purge 级联保持一致）。
+  // 连同整棵子树从 trash 列表移除（与数据层 purge 级联保持一致）。B5：子树收集复用共享 helper。
   purgeTx: async (id) => {
-    await transactionRepo.purge(id);
-    const trash = get().trash;
-    const remove = new Set<number>([id]);
-    const stack = [id];
-    while (stack.length) {
-      const cur = stack.pop()!;
-      for (const t of trash) {
-        if (t.parent_id === cur) {
-          remove.add(t.id);
-          stack.push(t.id);
-        }
-      }
+    try {
+      await transactionRepo.purge(id);
+      const trash = get().trash;
+      const remove = new Set<number>([id, ...collectSubtreeIds(trash, id)]);
+      set({ trash: trash.filter((t) => !remove.has(t.id)) });
+    } catch (e) {
+      set({ error: (e as Error).message });
     }
-    set({ trash: trash.filter((t) => !remove.has(t.id)) });
   },
 
   // 清空回收站：删除全部已软删除记录
@@ -283,15 +280,17 @@ export const useTxStore = create<TxStore>((set, get) => ({
     set({ trash: [] });
   },
 
-  // 0.1.18：启动或跨天时，把 deadline_type=date 且 deadline_date=今天的事务自动归一为 today
+  // 0.1.18 + 1.0.2：启动或跨天时，把 deadline_type=date 且 deadline_date=今天的事务自动归一为 today，
+  // 并借 resolveDeadline 把"今日"锚点日期写入 deadline_date（而非清空），避免失去锚点。
   normalizeDeadlines: async () => {
     const today = new Date();
     const jobs: Promise<void>[] = [];
     for (const t of get().active) {
       if (t.deadline_type === "date" && t.deadline_date) {
         const norm = normalizeDeadline(t.deadline_type, t.deadline_date, today);
-        if (norm.type !== t.deadline_type || norm.date !== t.deadline_date) {
-          jobs.push(get().updateTx(t.id, { deadline_type: norm.type, deadline_date: norm.date }));
+        const dl = resolveDeadline(norm.type, norm.date, today);
+        if (dl.type !== t.deadline_type || dl.date !== t.deadline_date) {
+          jobs.push(get().updateTx(t.id, { deadline_type: dl.type, deadline_date: dl.date }));
         }
       }
     }
@@ -299,6 +298,12 @@ export const useTxStore = create<TxStore>((set, get) => ({
   },
 
   // 提醒检查：遍历到期且未弹过的 active 事务，弹系统通知并标记已弹。
+  // A2 修复 + 并发加固：
+  //   - 原 bug：先发通知、后标记；通知一旦抛错则标记永不发生 → 每轮重弹死循环。
+  //   - 加固点：在发起任何 await 之前，先「同步」把内存里这条置为已弹（乐观预标记），
+  //     关闭并发扫描的竞态窗口——即便 App 因 StrictMode 双挂载等原因产生两轮扫描，
+  //     第二轮一读内存就已经是 reminder_done=1，绝不会重复发送。
+  //   - DB 标记保证跨重启去重；内存预标记保证同会话内不重发。
   checkReminders: async () => {
     const now = Date.now();
     const due = get().active.filter(
@@ -309,14 +314,20 @@ export const useTxStore = create<TxStore>((set, get) => ({
         new Date(t.reminder_time).getTime() <= now,
     );
     for (const t of due) {
+      // 乐观预标记：在任何异步之前先把内存置「已弹=1 + 清空 reminder_time」，
+      // 杜绝并发扫描重复发送，并让铃铛图标立即消失（提醒已触发，无需再展示「有待办提醒」）。
+      set((s) => ({
+        active: s.active.map((x) =>
+          x.id === t.id ? { ...x, reminder_done: 1, reminder_time: null } : x,
+        ),
+      }));
       try {
-        await sendNotification({
-          title: "NowTree 提醒",
-          body: t.title + (t.note ? "\n" + t.note : ""),
-        });
-        await get().updateTx(t.id, { reminder_done: 1 });
+        // clear_reminder=true 让后端把 reminder_time 置 NULL（直接传 null 会被「有值才改」逻辑跳过）；
+        // 这样提醒触发后即自数据层彻底清除，不会「已弹过却还挂着提醒」反复提示。
+        await get().updateTx(t.id, { reminder_done: 1, clear_reminder: true });
+        await notify("NowTree 提醒", t.title + (t.note ? "\n" + t.note : ""));
       } catch {
-        // 通知失败（如未授权）静默忽略，不阻断
+        // 写库或通知失败：内存已标记 + 已清，不会重弹；写库失败仅影响跨重启去重（下一轮会重试一次，无害）
       }
     }
   },

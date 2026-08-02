@@ -2,6 +2,7 @@
 // 把散落在各列表视图里的「类别迁移规则 / 是否在 Next 展示 / 来源标签」等纯逻辑
 // 收拢到一处。视图只管渲染与交互，规则都在这里——以后改做法只翻这一本「食谱」。
 import type { Category, Transaction } from "../types/transaction";
+import { byOrder } from "../types/transaction";
 
 // 类别迁移补丁（原 GenericListView.catTarget 的业务核心）：
 //   - inbox 禁止互转、拖到自己所在类别无操作：由调用方（视图）早返回拦截，本函数只产补丁；
@@ -12,7 +13,7 @@ export function buildCategoryPatch(
   target: Category,
 ): Partial<Transaction> & { clear_parent?: boolean } {
   if (tx.category === "next_action") {
-    return { category: target, clear_parent: true, time_slot: "none", show_in_next: 0 };
+    return { category: target, clear_parent: true, time_slot: "none", show_in_next: false };
   }
   return { category: target };
 }
@@ -28,4 +29,35 @@ export function sourceText(t: Transaction): string | null {
   if (t.category === "waiting") return "来源：Waiting";
   if (t.category === "someday") return "来源：Someday";
   return null;
+}
+
+// 某父事务的直接子事务（按 order 排序）——从传入的事务集合中筛选（C5：原在 ProjectListView
+// 内联，属 service 职责，移出后视图只调用，避免 Feature Envy）。
+export function childrenOf(items: Transaction[], pid: number): Transaction[] {
+  return items.filter((t) => t.parent_id === pid).sort(byOrder);
+}
+
+// 收集 rootId 的全部后代 id（向下，任意层级），不含 root 自身（B5：store 删除/彻底删除时在
+// 本地缓存里移除整棵子树用；DB 级联已由后端 adapter 承担，store 不再重写遍历算法）。
+export function collectSubtreeIds(items: Transaction[], rootId: number): number[] {
+  const out: number[] = [];
+  const stack = [rootId];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    for (const t of items) {
+      if (t.parent_id === cur) {
+        out.push(t.id);
+        stack.push(t.id);
+      }
+    }
+  }
+  return out;
+}
+
+// 父事务完成度：有子事务→已完成子事务占比(0~1)；无子事务→自身是否完成(0/1)。
+// 同样只依赖传入的事务集合，不触碰视图的 active 状态（C5）。
+export function parentDoneRatioOf(p: Transaction, items: Transaction[]): number {
+  const kids = childrenOf(items, p.id);
+  if (kids.length === 0) return p.status === "completed" ? 1 : 0;
+  return kids.filter((k) => k.status === "completed").length / kids.length;
 }

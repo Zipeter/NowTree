@@ -2,7 +2,7 @@
 // 本组件只负责：渲染字段 + 收集字段值 + 基本的「标题非空 / 防重复提交」校验，
 // 并通过 onSubmit 回调把值交出去；store 的写入（createTx / updateTx）、日期归一、
 // clear_reminder 标志等「保存时的业务逻辑」由外层弹窗处理。
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   PRIORITY_MAX,
@@ -31,9 +31,13 @@ interface TransactionFormProps {
   showCategory?: boolean;
   submitLabel: string;
   onCancel: () => void;
-  onSubmit: (v: TxFormValues) => void;
+  onSubmit: (v: TxFormValues) => void | Promise<void>;
   // 额外操作按钮（如编辑弹窗的「删除」），渲染在 取消 与 主按钮 之间。
   extraActions?: ReactNode;
+  // 额外字段插槽（如 ConvertModal 的「父事务」选择器），仅在 category==="project" 时渲染。
+  parentSelect?: ReactNode;
+  // 批量场景：值变化时把字段重置回 initial（如 AddChildModal 的「添加并继续」）。
+  resetKey?: number;
 }
 
 const DEADLINES: DeadlineType[] = ["none", "today", "week", "month", "date"];
@@ -66,6 +70,8 @@ export default function TransactionForm({
   onCancel,
   onSubmit,
   extraActions,
+  parentSelect,
+  resetKey,
 }: TransactionFormProps) {
   const [title, setTitle] = useState(initial.title);
   const [note, setNote] = useState(initial.note);
@@ -78,20 +84,36 @@ export default function TransactionForm({
   const dateRef = useRef<HTMLInputElement>(null);
   const reminderRef = useRef<HTMLInputElement>(null);
 
-  function submit() {
+  // 批量添加场景：resetKey 递增时把字段重置回 initial（不清空父级状态，如 AddChildModal 的 batchId）。
+  useEffect(() => {
+    setTitle(initial.title);
+    setNote(initial.note);
+    setCategory(initial.category);
+    setPriority(initial.priority);
+    setDeadlineType(initial.deadlineType);
+    setDeadlineDate(initial.deadlineDate);
+    setReminderTime(initial.reminderTime);
+    savingRef.current = false;
+  }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function submit() {
     if (savingRef.current) return;
     const t = title.trim();
     if (!t) return;
     savingRef.current = true;
-    onSubmit({
-      title: t,
-      note: note.trim(),
-      category,
-      priority,
-      deadlineType,
-      deadlineDate,
-      reminderTime,
-    });
+    try {
+      await onSubmit({
+        title: t,
+        note: note.trim(),
+        category,
+        priority,
+        deadlineType,
+        deadlineDate,
+        reminderTime,
+      });
+    } finally {
+      savingRef.current = false;
+    }
   }
 
   function handleNoteKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -171,6 +193,9 @@ export default function TransactionForm({
           </div>
         </div>
       )}
+
+      {/* parentSelect 插槽：如 ConvertModal 的「父事务」选择器，仅 project 类型时渲染 */}
+      {!inbox && showCategory && category === "project" && parentSelect}
 
       {!inbox && (
         <>

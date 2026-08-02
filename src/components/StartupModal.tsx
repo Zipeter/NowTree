@@ -22,7 +22,7 @@ export default function StartupModal({ onClose }: { onClose: () => void }) {
       if (t.status === "completed") continue;
       if (
         ((t.category === "next_action" && t.parent_id === null) ||
-          t.show_in_next === 1) &&
+          t.show_in_next) &&
         t.time_slot !== "none"
       ) {
         m[t.time_slot].push(t.title);

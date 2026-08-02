@@ -37,8 +37,8 @@ function makeTransaction(input: Partial<Transaction> & { title: string }): Trans
     completed_time: input.completed_time ?? null,
     updated_time: input.updated_time ?? nowISO(),
     parent_id: input.parent_id ?? null,
-    show_in_next: input.show_in_next ?? 0,
-    deleted: input.deleted ?? 0,
+    show_in_next: input.show_in_next ?? false,
+    deleted: input.deleted ?? false,
     order_index: input.order_index ?? null,
     reminder_time: input.reminder_time ?? null,
     reminder_done: input.reminder_done ?? 0,
@@ -65,11 +65,7 @@ export class MemoryTransactionRepository implements TransactionRepository {
         query.parentId === null ? t.parent_id === null : t.parent_id === query.parentId,
       );
     }
-    // 全局 Next 视图：只纳入无父级的独立事项，或用户手动「加入 Next」的子事务
-    if (query.includeProjectChildrenInNext === false) {
-      result = result.filter((t) => t.parent_id === null || t.show_in_next === 1);
-    }
-    result = result.filter((t) => t.deleted === 0);
+    result = result.filter((t) => !t.deleted);
     result.sort((a, b) => (a.created_time < b.created_time ? 1 : -1));
     return result;
   }
@@ -102,11 +98,15 @@ export class MemoryTransactionRepository implements TransactionRepository {
     if (!t) throw new Error(`Transaction ${id} not found`);
     // 把「清空标志」从 patch 中剥离并显式落实，避免它们作为杂散字段落到事务对象上。
     const { clear_parent, clear_reminder, clear_note, ...rest } = patch;
-    if (clear_note) t.note = null;
-    if (clear_reminder) t.reminder_time = null;
-    if (clear_parent) t.parent_id = null;
-    Object.assign(t, rest, { updated_time: nowISO() });
-    return t;
+    // A3 修复：返回全新对象（展开 t 再叠加变更），而非原地 Object.assign 返回同一引用。
+    // 原写法在内存回退路径下会让 React 因引用相等而跳过重渲染，表现为「编辑/备注存不进去」。
+    const next: Transaction = { ...t, ...rest, updated_time: nowISO() };
+    if (clear_note) next.note = null;
+    if (clear_reminder) next.reminder_time = null;
+    if (clear_parent) next.parent_id = null;
+    const idx = this.items.findIndex((x) => x.id === id);
+    this.items[idx] = next;
+    return next;
   }
 
   // 收集某个根的全部后代 id（向下，任意层级）。不含根自身。
@@ -140,7 +140,7 @@ export class MemoryTransactionRepository implements TransactionRepository {
     const ids = new Set<number>([id, ...this.collectDescendantIds(id)]);
     for (const t of this.items) {
       if (ids.has(t.id)) {
-        t.deleted = 1;
+        t.deleted = true;
         t.deleted_at = now;
         t.updated_time = now;
       }
@@ -151,22 +151,28 @@ export class MemoryTransactionRepository implements TransactionRepository {
     const t = this.items.find((x) => x.id === id);
     if (!t) throw new Error(`Transaction ${id} not found`);
     if (t.status !== "inbox") throw new Error(`Transaction ${id} is not in inbox`);
-    // 原地转换：不新建记录，直接改写这条 Inbox 为正式事务
-    t.title = input.title;
-    t.note = input.note ?? null;
-    t.category = input.category;
-    t.status = "active";
-    t.deadline_type = input.deadline_type ?? "none";
-    t.deadline_date = input.deadline_date ?? null;
-    t.priority = input.priority ?? null;
-    t.updated_time = nowISO();
-    return t;
+    // A3 修复：返回全新对象（同源问题——原地改写会返回同一引用导致不重渲染）。
+    // 不新建记录，直接改写这条 Inbox 为正式事务（引用更新为 next）。
+    const next: Transaction = {
+      ...t,
+      title: input.title,
+      note: input.note ?? null,
+      category: input.category,
+      status: "active",
+      deadline_type: input.deadline_type ?? "none",
+      deadline_date: input.deadline_date ?? null,
+      priority: input.priority ?? null,
+      updated_time: nowISO(),
+    };
+    const idx = this.items.findIndex((x) => x.id === id);
+    this.items[idx] = next;
+    return next;
   }
 
   // 回收站（与 Tauri 实现行为一致）
   async listDeleted(): Promise<Transaction[]> {
     return [...this.items]
-      .filter((t) => t.deleted === 1)
+      .filter((t) => t.deleted)
       .sort((a, b) => ((a.updated_time ?? "") < (b.updated_time ?? "") ? 1 : -1));
   }
   async restore(id: number): Promise<void> {
@@ -179,7 +185,7 @@ export class MemoryTransactionRepository implements TransactionRepository {
     ]);
     for (const t of this.items) {
       if (ids.has(t.id)) {
-        t.deleted = 0;
+        t.deleted = false;
         t.deleted_at = null;
         t.updated_time = now;
       }
@@ -191,6 +197,6 @@ export class MemoryTransactionRepository implements TransactionRepository {
     this.items = this.items.filter((t) => !ids.has(t.id));
   }
   async emptyTrash(): Promise<void> {
-    this.items = this.items.filter((t) => t.deleted !== 1);
+    this.items = this.items.filter((t) => !t.deleted);
   }
 }
