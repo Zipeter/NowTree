@@ -21,6 +21,7 @@ export interface Transaction {
   updated_time: string | null;
   parent_id: number | null;
   show_in_next: boolean;
+  wait_auto_next: boolean; // 1.0.2：waiting 到期自动进 Next 后标记，避免每日扫描重复触发
   deleted: boolean;
   order_index: number | null;
   // 提醒：到点触发桌面弹窗。reminder_time 为本地时间（datetime-local 的 YYYY-MM-DDTHH:MM）
@@ -76,6 +77,11 @@ export function resolveDeadline(
   // month：取 base 所在月的最后一天
   const last = new Date(base.getFullYear(), base.getMonth() + 1, 0);
   return { type, date: fmtDate(last) };
+}
+
+// 本地当前日期 YYYY-MM-DD（用于"截止日早于今天"等比较场景）
+export function todayStr(): string {
+  return fmtDate(new Date());
 }
 
 // YYYY-MM-DD（本地）格式化

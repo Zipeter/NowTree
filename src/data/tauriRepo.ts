@@ -31,7 +31,7 @@ function normalizeError(e: unknown): string {
 // C1：repo 边界的 0/1 ↔ boolean 转换。Rust/SQLite 以整数存储 show_in_next / deleted，
 // TS 类型统一用 boolean；读时把整数字段归一为布尔、写时把布尔还原为整数，DB 契约不变。
 function rowToTx(row: Transaction): Transaction {
-  return { ...row, show_in_next: !!row.show_in_next, deleted: !!row.deleted };
+  return { ...row, show_in_next: !!row.show_in_next, deleted: !!row.deleted, wait_auto_next: !!row.wait_auto_next };
 }
 function patchToRow(
   patch: Partial<Transaction> & { clear_parent?: boolean; clear_reminder?: boolean; clear_note?: boolean },
@@ -39,6 +39,7 @@ function patchToRow(
   const out: Record<string, unknown> = { ...patch };
   if (typeof patch.show_in_next === "boolean") out.show_in_next = patch.show_in_next ? 1 : 0;
   if (typeof patch.deleted === "boolean") out.deleted = patch.deleted ? 1 : 0;
+  if (typeof patch.wait_auto_next === "boolean") out.wait_auto_next = patch.wait_auto_next ? 1 : 0;
   return out;
 }
 

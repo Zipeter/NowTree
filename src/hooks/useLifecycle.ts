@@ -20,17 +20,19 @@ export function useReminderScan(checkReminders: () => void) {
 export function useDeadlineNormalize(normalize: () => void) {
   useEffect(() => {
     let timeoutId: number;
-    const schedule = () => {
-      normalize();
+    // 1.0.2：不再挂载瞬间立即扫描——此时本地数据尚未加载（loadActive 异步），
+    // 扫了也是空扫。改为仅安排「每日 0 点」定时扫描；启动后的那一次归一，
+    // 由 store.loadActive 在写入数据后补调 normalizeDeadlines() 触发。
+    const scheduleNextMidnight = () => {
       const now = new Date();
       const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
       const ms = next.getTime() - now.getTime();
       timeoutId = window.setTimeout(() => {
         normalize();
-        schedule(); // 递归安排下一天
+        scheduleNextMidnight(); // 递归安排下一天
       }, ms);
     };
-    schedule();
+    scheduleNextMidnight();
     return () => clearTimeout(timeoutId);
   }, [normalize]);
 }

@@ -24,7 +24,7 @@ import {
 const CATEGORY_HINTS: Record<Category, string> = {
   next_action: "立刻能做的下一步，按优先级推进。",
   project: "需要多步推进的目标，可拆成子事务。",
-  waiting: "在等别人或外部条件，定期回顾别漏掉。",
+  waiting: "在等别人或外部条件，设了时间要求到期会自动进 Next，记得定期回顾别漏掉。",
   someday: "也许将来想做，先记着，不占用当下精力。",
 };
 

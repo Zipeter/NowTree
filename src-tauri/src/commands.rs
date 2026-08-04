@@ -57,6 +57,7 @@ pub struct PatchInput {
     pub completed_time: Option<String>,
     pub reminder_time: Option<String>,
     pub reminder_done: Option<i64>,
+    pub wait_auto_next: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,7 +76,7 @@ pub struct ConvertInput {
 const SELECT_COLS: &str = "id, title, note, category, status, deadline_type, \
 deadline_date, priority, created_time, completed_time, updated_time, \
 parent_id, show_in_next, deleted, order_index, reminder_time, reminder_done, time_slot, \
-sync_id, deleted_at";
+sync_id, deleted_at, wait_auto_next";
 
 fn row_to_tx(row: &rusqlite::Row) -> Transaction {
     Transaction {
@@ -99,6 +100,7 @@ fn row_to_tx(row: &rusqlite::Row) -> Transaction {
         time_slot: row.get(17).unwrap(),
         sync_id: row.get(18).unwrap(),
         deleted_at: row.get(19).unwrap(),
+        wait_auto_next: row.get(20).unwrap(),
     }
 }
 
@@ -292,6 +294,9 @@ pub fn update_transaction(
     if let Some(v) = patch.reminder_done {
         add!("reminder_done", v);
     }
+    if let Some(v) = patch.wait_auto_next {
+        add!("wait_auto_next", v);
+    }
     add!("updated_time", chrono::Utc::now().to_rfc3339());
 
     if sets.is_empty() {
@@ -474,6 +479,7 @@ pub struct ImportRow {
     pub time_slot: String,
     pub sync_id: Option<String>,   // 0.1.19
     pub deleted_at: Option<String>, // 0.1.19
+    pub wait_auto_next: Option<i64>, // 1.0.2
 }
 
 // 导入文件信封：0.2.0 起导出为 { exported_at, transactions }，便于导入时显示真实备份日期。
@@ -592,8 +598,8 @@ pub fn import_data(state: State<Db>, path: String) -> Result<ImportResult, Strin
             "INSERT OR REPLACE INTO transactions \
              (id, title, note, category, status, deadline_type, deadline_date, priority, \
               created_time, completed_time, updated_time, parent_id, show_in_next, deleted, \
-              order_index, reminder_time, reminder_done, time_slot, sync_id, deleted_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+              order_index, reminder_time, reminder_done, time_slot, sync_id, deleted_at, wait_auto_next) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
             params![
                 r.id,
                 r.title,
@@ -614,7 +620,8 @@ pub fn import_data(state: State<Db>, path: String) -> Result<ImportResult, Strin
                 r.reminder_done,
                 r.time_slot,
                 r.sync_id,
-                r.deleted_at
+                r.deleted_at,
+                r.wait_auto_next.unwrap_or(0)
             ],
         )
         .map_err(|e| e.to_string())?;

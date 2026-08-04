@@ -24,4 +24,5 @@ pub struct Transaction {
     pub time_slot: String,
     pub sync_id: Option<String>,   // 0.1.19：稳定全局唯一 ID（UUID），为将来多端同步铺路
     pub deleted_at: Option<String>, // 0.1.19：软删除时间戳（ISO8601），deleted=1 时记录何时删
+    pub wait_auto_next: i64, // 1.0.2：waiting 到期自动进 Next 后标记，避免重复触发
 }

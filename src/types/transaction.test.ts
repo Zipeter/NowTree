@@ -34,6 +34,7 @@ function mk(p: Partial<Transaction>): Transaction {
     time_slot: "none",
     sync_id: null,
     deleted_at: null,
+    wait_auto_next: false,
     ...p,
   };
 }

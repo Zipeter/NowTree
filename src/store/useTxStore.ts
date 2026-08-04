@@ -66,6 +66,8 @@ interface TxStore {
   emptyTrash: () => Promise<void>;
   // 0.1.18：启动/跨天时扫描，把「具体日期=今天」的 deadline 自动归一为「今日」
   normalizeDeadlines: () => Promise<void>;
+  // 1.0.2：Waiting for 设时间要求且已到/逾期的项，自动翻 show_in_next=1 进 Next
+  autoPromoteWaiting: () => Promise<void>;
   // 提醒：扫描到期且未弹过的 active 事务，弹系统通知并标记已弹。
   checkReminders: () => Promise<void>;
 }
@@ -93,6 +95,9 @@ export const useTxStore = create<TxStore>((set, get) => ({
     try {
       const list = await transactionRepo.list({});
       set({ active: list, loading: false });
+      // 1.0.2：数据写入后再做一次 deadline 归一（具体日期=今天 → 今日）。
+      // 修复此前「挂载瞬间扫描时本地数据尚未加载、扫空」导致该功能几乎不触发的问题。
+      await get().normalizeDeadlines();
     } catch (e) {
       set({ error: (e as Error).message, loading: false });
     }
@@ -292,6 +297,35 @@ export const useTxStore = create<TxStore>((set, get) => ({
         if (dl.type !== t.deadline_type || dl.date !== t.deadline_date) {
           jobs.push(get().updateTx(t.id, { deadline_type: dl.type, deadline_date: dl.date }));
         }
+      }
+    }
+    await Promise.all(jobs);
+    // 1.0.2：deadline 归一后紧接执行 Waiting 自动晋升（同一次启动/跨天扫描）；
+    // 必须 RUN AFTER 归一，确保 deadline_date 已是最新锚点。
+    await get().autoPromoteWaiting();
+  },
+
+  // 1.0.2：Waiting for 设了时间要求且已到/逾期的项，自动翻 show_in_next=1 进 Next，
+  // 并置 wait_auto_next=1 标记已晋升，避免每日扫描反复骚扰。
+  // 判定统一用 deadline_date（四种类型锚点日期均已写入该列，不依赖 deadline_type 分支），
+  // 故本周/本月/今日/具体日期都不会漏；<= 今天 含逾期，到达后一直留。
+  autoPromoteWaiting: async () => {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = today.getMonth() + 1;
+    const d = today.getDate();
+    const todayStr = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const jobs: Promise<void>[] = [];
+    for (const t of get().active) {
+      const due = t.deadline_date;
+      if (
+        t.category === "waiting" &&
+        t.deadline_type !== "none" &&
+        due &&
+        due <= todayStr &&
+        !t.wait_auto_next
+      ) {
+        jobs.push(get().updateTx(t.id, { show_in_next: true, wait_auto_next: true }));
       }
     }
     await Promise.all(jobs);

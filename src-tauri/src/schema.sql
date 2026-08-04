@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   time_slot       TEXT NOT NULL DEFAULT 'none', -- none|morning|noon|evening（Next 三时段分配，0.1.16）
   sync_id         TEXT,                        -- 0.1.19：稳定全局唯一 ID（UUID），为将来多端同步铺路
   deleted_at      TEXT,                        -- 0.1.19：软删除时间戳（ISO8601），deleted=1 时记录何时删
+  wait_auto_next  INTEGER NOT NULL DEFAULT 0,  -- 0/1，waiting 到期自动进 Next 后标记，避免每日扫描重复触发（1.0.2）
   FOREIGN KEY (parent_id) REFERENCES transactions(id)
 );
 

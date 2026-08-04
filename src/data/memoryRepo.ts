@@ -45,6 +45,7 @@ function makeTransaction(input: Partial<Transaction> & { title: string }): Trans
     time_slot: input.time_slot ?? "none",
     sync_id: input.sync_id ?? genSyncId(),
     deleted_at: input.deleted_at ?? null,
+    wait_auto_next: input.wait_auto_next ?? false,
   };
 }
 

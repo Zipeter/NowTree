@@ -42,6 +42,11 @@ impl Db {
         // 0.1.19：补齐 sync_id / deleted_at（老库无这两列时 ALTER 加上）。
         let _ = conn.execute("ALTER TABLE transactions ADD COLUMN sync_id TEXT", []);
         let _ = conn.execute("ALTER TABLE transactions ADD COLUMN deleted_at TEXT", []);
+        // 1.0.2：补齐 waiting 到期自动进 Next 的标记列（老库缺该列时 ALTER 加上）
+        let _ = conn.execute(
+            "ALTER TABLE transactions ADD COLUMN wait_auto_next INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         // 0.1.19：为历史数据补 sync_id（未来多端同步需要稳定全局唯一 ID）。
         // 仅对 sync_id IS NULL 的行补，已是 UUID 的不动；一行一个独立 UUID。
         let ids: Vec<i64> = {

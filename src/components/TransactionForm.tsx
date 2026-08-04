@@ -9,9 +9,13 @@ import {
   CATEGORIES,
   CATEGORY_LABELS,
   deadlineOptionLabel,
+  normalizeDeadline,
+  resolveDeadline,
+  todayStr,
   type Category,
   type DeadlineType,
 } from "../types/transaction";
+import { showToast } from "../toast";
 
 export interface TxFormValues {
   title: string;
@@ -21,6 +25,9 @@ export interface TxFormValues {
   deadlineType: DeadlineType;
   deadlineDate: string;
   reminderTime: string;
+  // 1.0.2 优化：用户是否动过「时间要求」那一栏。保存时据此决定
+  // 原样回写还是重算，并据此把关「过期拦截」toast。表单内部用 state 管理，initial 不需传。
+  deadlineInteracted?: boolean;
 }
 
 interface TransactionFormProps {
@@ -80,9 +87,17 @@ export default function TransactionForm({
   const [deadlineType, setDeadlineType] = useState<DeadlineType>(initial.deadlineType);
   const [deadlineDate, setDeadlineDate] = useState(initial.deadlineDate);
   const [reminderTime, setReminderTime] = useState(initial.reminderTime);
+  const [deadlineInteracted, setDeadlineInteracted] = useState(false);
   const savingRef = useRef(false);
   const dateRef = useRef<HTMLInputElement>(null);
   const reminderRef = useRef<HTMLInputElement>(null);
+
+  // 1.0.2 优化：编辑已逾期项时，时间要求下拉「伪装」显示成「无」，但内部 deadlineType 仍保留真实值，
+  // 不触碰数据 → 列表中的逾期红标照常保留；用户一旦操作该栏（deadlineInteracted）即解除伪装、走真实逻辑。
+  // 新建场景 initial 无逾期项，isInitialOverdue 恒为 false，伪装不触发，行为不变。
+  const isInitialOverdue =
+    initial.deadlineType !== "none" && !!initial.deadlineDate && initial.deadlineDate < todayStr();
+  const displayDeadlineType = !deadlineInteracted && isInitialOverdue ? "none" : deadlineType;
 
   // 批量添加场景：resetKey 递增时把字段重置回 initial（不清空父级状态，如 AddChildModal 的 batchId）。
   useEffect(() => {
@@ -93,6 +108,7 @@ export default function TransactionForm({
     setDeadlineType(initial.deadlineType);
     setDeadlineDate(initial.deadlineDate);
     setReminderTime(initial.reminderTime);
+    setDeadlineInteracted(false);
     savingRef.current = false;
   }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -100,6 +116,20 @@ export default function TransactionForm({
     if (savingRef.current) return;
     const t = title.trim();
     if (!t) return;
+    // 1.0.2 优化：非 inbox 项若设了早于今天的"时间要求"则拦截保存，弹 toast 轻提示并引导重选，
+    // 避免存入过去日期导致 waiting 瞬间误进 Next。**仅当用户动过时间要求那栏才校验**
+    // ——否则打开一个有过去日期的逾期项（如昨天选的本日）只改个备注保存，会被误拦，违背"打开看一眼不改动数据"。
+    if (!inbox && deadlineInteracted) {
+      const norm = normalizeDeadline(
+        deadlineType,
+        deadlineType === "date" ? (deadlineDate || null) : null,
+      );
+      const dl = resolveDeadline(norm.type, norm.date);
+      if (dl.date && dl.date < todayStr()) {
+        showToast("你设置的时间已过期，请重新设置");
+        return;
+      }
+    }
     savingRef.current = true;
     try {
       await onSubmit({
@@ -110,6 +140,7 @@ export default function TransactionForm({
         deadlineType,
         deadlineDate,
         reminderTime,
+        deadlineInteracted,
       });
     } finally {
       savingRef.current = false;
@@ -136,12 +167,14 @@ export default function TransactionForm({
   function handleDeadlineChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const val = e.target.value as DeadlineType;
     setDeadlineType(val);
+    setDeadlineInteracted(true);
     if (val === "date") openPicker(dateRef);
   }
 
   function clearDeadline() {
     setDeadlineType("none");
     setDeadlineDate("");
+    setDeadlineInteracted(true);
   }
 
   function onReminderChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -219,7 +252,7 @@ export default function TransactionForm({
             <div className="reminder-picker">
               <select
                 className="deadline-select"
-                value={deadlineType}
+                value={displayDeadlineType}
                 onChange={handleDeadlineChange}
               >
                 {DEADLINES.map((d) => (
@@ -235,9 +268,10 @@ export default function TransactionForm({
                 value={deadlineDate}
                 onChange={(e) => {
                   setDeadlineDate(e.target.value);
+                  setDeadlineInteracted(true);
                 }}
               />
-              {deadlineType === "date" && deadlineDate && (
+              {displayDeadlineType === "date" && deadlineDate && (
                 <>
                   <span className="reminder-value" onClick={() => openPicker(dateRef)}>
                     {deadlineDate}

@@ -34,13 +34,34 @@ export default function EditModal({ tx, onClose, inbox, onDelete, hideCategory }
     if (inbox) {
       // Inbox 灵感编辑：仅改标题与备注，保持 status=inbox、category=null
       updateTx(tx.id, { title: t, ...notePatch });
+    } else if (!v.deadlineInteracted) {
+      // 1.0.2 优化：用户没动过「时间要求」那栏 → 原样回写原始 deadline，
+      // 跳过 resolveDeadline 重算。否则打开一个逾期项（如昨天选的本日）只改备注再保存，
+      // 会被重算成"今天"从而救活逾期、红标消失。手动移出 Next 的 wait_auto_next 标记也一并保留。
+      updateTx(tx.id, {
+        title: t,
+        ...notePatch,
+        category: v.category,
+        deadline_type: tx.deadline_type,
+        deadline_date: tx.deadline_date,
+        priority: v.priority,
+        reminder_time: v.reminderTime || null,
+        clear_reminder: v.reminderTime === "" ? true : undefined,
+        reminder_done: 0,
+      });
     } else {
-      // 0.1.16 + 1.0.2：日期检测 + 相对类型把锚点日期写入 deadline_date
+      // 0.1.16 + 1.0.2：日期检测 + 的分支——用户改动过时间要求，按真实值重算锚点写入 deadline_date
       const norm = normalizeDeadline(
         v.deadlineType,
         v.deadlineType === "date" ? (v.deadlineDate || null) : null,
       );
       const dl = resolveDeadline(norm.type, norm.date);
+      // 1.0.2 优化：用户在「表单层」改动了时间要求（对 normalize 每日重锚免疫），
+      // 且类别为 waiting 时，把 wait_auto_next 清回 0 重新"上膛"——新日期到了会再次自动进 Next；
+      // 仅改标题/备注或切回同类型则不受影响，手动移出 Next 的护栏继续生效。
+      const deadlineChanged =
+        v.deadlineType !== tx.deadline_type ||
+        (v.deadlineType === "date" && (v.deadlineDate || "") !== (tx.deadline_date ?? ""));
       updateTx(tx.id, {
         title: t,
         ...notePatch,
@@ -53,6 +74,7 @@ export default function EditModal({ tx, onClose, inbox, onDelete, hideCategory }
         // 让 Rust 端把 reminder_time 真正置 NULL（否则传 null 会被后端「有值才改」逻辑跳过）。
         clear_reminder: v.reminderTime === "" ? true : undefined,
         reminder_done: 0,
+        ...(deadlineChanged && tx.category === "waiting" ? { wait_auto_next: false } : {}),
       });
     }
     onClose();
