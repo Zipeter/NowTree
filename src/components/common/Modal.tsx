@@ -25,7 +25,13 @@ export default function Modal({ title, onClose, children, onKeyDown }: ModalProp
   }, [onClose]);
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div
+      className="modal-overlay"
+      onMouseDown={(e) => {
+        // 1.0.3：仅在「直接按在遮罩本身」时关闭，排除从窗口内（如输入框拖选文本）发起的误触。
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div
         className="modal"
         onClick={(e) => e.stopPropagation()}

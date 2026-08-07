@@ -6,6 +6,7 @@
 // 差异点由各视图以回调注入，既消除重复又保留各自语义。
 import { useTxStore } from "../store/useTxStore";
 import type { Category } from "../types/transaction";
+import { playClearSound } from "../utils/clearSound";
 
 export interface ListActionsConfig {
   selected: Set<number>;
@@ -38,6 +39,7 @@ export function useListActions(cfg: ListActionsConfig) {
   async function cleanCompleted() {
     if (cfg.clearConfirm) {
       await cfg.deleteSelected([...cfg.selected]);
+      playClearSound(); // 1.0.3：二次确认后真正删除时播放清理音（受全局音效开关控制）
       await loadTrash();
       cfg.setSelected(new Set());
       cfg.setClearConfirm(false);
