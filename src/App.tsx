@@ -1,10 +1,11 @@
-import { useEffect, useState, useRef } from "react";
+﻿import { useEffect, useState, useRef } from "react";
 import { appDataDir, join } from "@tauri-apps/api/path";
 import InboxView from "./components/InboxView";
 import CategoryListView from "./components/CategoryListView";
 import ProjectListView from "./components/ProjectListView";
 import NextView from "./components/NextView";
 import StartupModal from "./components/StartupModal";
+import { currentClockSlot } from "./utils/clock";
 import TrashModal from "./components/TrashModal";
 import ShortcutsModal from "./components/ShortcutsModal";
 import ThemeModal from "./components/ThemeModal";
@@ -52,6 +53,19 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // 0.1.16：每次启动弹「今天」介绍弹窗（开发刷新也会弹）
   const [startupOpen, setStartupOpen] = useState(true);
+  // 1.0.4：跨边界重弹——记录最近一次已提示的时段，定时对比当前钟点，越过边界则重新弹出
+  const lastNotifiedSlotRef = useRef(currentClockSlot());
+  useEffect(() => {
+    if (startupOpen) lastNotifiedSlotRef.current = currentClockSlot();
+  }, [startupOpen]);
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!startupOpen && currentClockSlot() !== lastNotifiedSlotRef.current) {
+        setStartupOpen(true);
+      }
+    }, 30000);
+    return () => clearInterval(id);
+  }, [startupOpen]);
   // C11 修复：运行时计算真实 SQLite 文件路径，替代原硬编码（含未替换占位符「你」）。
   // 适配不同用户名 / 系统，浏览器预览环境则提示数据仅存内存。
   const [dbPath, setDbPath] = useState<string>("");
@@ -200,6 +214,12 @@ export default function App() {
                 e.preventDefault();
                 setView(n.key);
               }}
+              onKeyDown={(e) => {
+                if (e.key === " ") {
+                  e.preventDefault();
+                  setView(n.key);
+                }
+              }}
             >
               {n.label}
             </a>
@@ -266,7 +286,7 @@ export default function App() {
               </button>
               <div className="side-menu-sep" />
               <div className="side-menu-motto">种一棵树最好的时间是十年前，其次是现在</div>
-              <div className="side-menu-version">v1.0.3 · 本地 SQLite</div>
+              <div className="side-menu-version">v1.0.4 · 本地 SQLite</div>
             </div>
           )}
         </div>
@@ -386,7 +406,14 @@ export default function App() {
           </div>
         </Modal>
       )}
-      {startupOpen && <StartupModal onClose={() => setStartupOpen(false)} />}
+      {startupOpen && (
+        <StartupModal
+          onClose={() => {
+            lastNotifiedSlotRef.current = currentClockSlot();
+            setStartupOpen(false);
+          }}
+        />
+      )}
       {toast && (
         <div className="toast">
           <span>{toast}</span>

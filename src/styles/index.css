@@ -716,3 +716,5 @@ body.dragging-active .dropdown-menu {
 .startup-empty { font-size: 12px; }
 .startup-task-list { margin: 0; padding-left: 18px; font-size: 14px; }
 .startup-task-list li { margin: 3px 0; }
+.startup-quote { font-style: italic; color: var(--text-muted); margin: 0 0 10px; font-size: 14px; opacity: .9; }
+.startup-rest { font-size: 16px; margin: 12px 0; color: var(--text); }
